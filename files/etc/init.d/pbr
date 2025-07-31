@@ -12,22 +12,44 @@ USE_PROCD=1
 
 [ -n "${IPKG_INSTROOT}" ] && return 0
 
+if type extra_command >/dev/null 2>&1; then
+	extra_command 'status' "Generates output required to troubleshoot routing issues
+		Use '-d' option for more detailed output
+		Use '-p' option to automatically upload data under PBR paste.ee account
+			WARNING: while paste.ee uploads are unlisted, they are still publicly available
+		List domain names after options to include their lookup in report"
+	extra_command 'version' 'Show version information'
+	extra_command 'on_firewall_reload' '	Run service on firewall reload'
+	extra_command 'on_interface_reload' '	Run service on indicated interface reload'
+else
+# shellcheck disable=SC2034
+	EXTRA_COMMANDS='on_firewall_reload on_interface_reload status version'
+# shellcheck disable=SC2034
+	EXTRA_HELP="	status	Generates output required to troubleshoot routing issues
+		Use '-d' option for more detailed output
+		Use '-p' option to automatically upload data under PBR paste.ee account
+			WARNING: while paste.ee uploads are unlisted, they are still publicly available
+		List domain names after options to include their lookup in report"
+fi
+
 readonly packageName='pbr'
 readonly PKG_VERSION='dev-test'
-readonly packageCompat='13'
+readonly packageCompat='14'
 readonly serviceName="$packageName $PKG_VERSION"
 readonly packageConfigFile="/etc/config/${packageName}"
 readonly packageDebugFile="/var/run/${packageName}.debug"
 readonly packageLockFile="/var/run/${packageName}.lock"
 readonly dnsmasqFileDefault="/var/run/${packageName}.dnsmasq"
+readonly runningStatusFile="/dev/shm/${packageName}.status.json"
+readonly runningStatusFileLock="/var/lock/${packageName}.lock"
 readonly _OK_='\033[0;32m\xe2\x9c\x93\033[0m'
 readonly __OK__='\033[0;32m[\xe2\x9c\x93]\033[0m'
 readonly _OKB_='\033[1;34m\xe2\x9c\x93\033[0m'
 readonly __OKB__='\033[1;34m[\xe2\x9c\x93]\033[0m'
 readonly _FAIL_='\033[0;31m\xe2\x9c\x97\033[0m'
 readonly __FAIL__='\033[0;31m[\xe2\x9c\x97]\033[0m'
-readonly _ERROR_='\033[0;31mERROR\033[0m'
-readonly _WARNING_='\033[0;33mWARNING\033[0m'
+readonly _ERROR_='\033[0;31mERROR:\033[0m'
+readonly _WARNING_='\033[0;33mWARNING:\033[0m'
 readonly ip_full='/usr/libexec/ip-full'
 # shellcheck disable=SC2155
 readonly ipTablePrefix="$packageName"
@@ -79,10 +101,9 @@ nft_set_policy=
 nft_set_timeout=
 
 # run-time
+load_environment_flag=
 aghConfigFile='/etc/AdGuardHome/AdGuardHome.yaml'
 gatewaySummary=
-errorSummary=
-warningSummary=
 wanIface4=
 wanIface6=
 dnsmasqFileList=
@@ -146,6 +167,8 @@ output_okb() { output 1 "$_OKB_"; output 2 "$__OKB__\n"; }
 output_okbn() { output 1 "$_OKB_\n"; output 2 "$__OKB__\n"; }
 output_fail() { output 1 "$_FAIL_"; output 2 "$__FAIL__\n"; }
 output_failn() { output 1 "$_FAIL_\n"; output 2 "$__FAIL__\n"; }
+output_error() { output "${_ERROR_} $*!\n"; }
+output_warning() { output "${_WARNING_} $*!\n"; }
 quiet_mode() {
 	case "$1" in
 		on) verbosity=0;;
@@ -329,30 +352,10 @@ print_json_bool() { json_init; json_add_boolean "$1" "$2"; json_dump; json_clean
 print_json_string() { json_init; json_add_string "$1" "$2"; json_dump; json_cleanup; }
 try() {
 	if ! "$@" >/dev/null 2>&1; then
-		state add 'errorSummary' 'errorTryFailed' "$*"
+		json add error 'errorTryFailed' "$*"
 		return 1
 	fi
 }
-
-if type extra_command >/dev/null 2>&1; then
-	extra_command 'status' "Generates output required to troubleshoot routing issues
-		Use '-d' option for more detailed output
-		Use '-p' option to automatically upload data under PBR paste.ee account
-			WARNING: while paste.ee uploads are unlisted, they are still publicly available
-		List domain names after options to include their lookup in report"
-	extra_command 'version' 'Show version information'
-	extra_command 'on_firewall_reload' '	Run service on firewall reload'
-	extra_command 'on_interface_reload' '	Run service on indicated interface reload'
-else
-# shellcheck disable=SC2034
-	EXTRA_COMMANDS='on_firewall_reload on_interface_reload status version'
-# shellcheck disable=SC2034
-	EXTRA_HELP="	status	Generates output required to troubleshoot routing issues
-		Use '-d' option for more detailed output
-		Use '-p' option to automatically upload data under PBR paste.ee account
-			WARNING: while paste.ee uploads are unlisted, they are still publicly available
-		List domain names after options to include their lookup in report"
-fi
 
 get_text() {
 	local r
@@ -360,7 +363,7 @@ get_text() {
 		errorConfigValidation) r="Config ($packageConfigFile) validation failure!";;
 		errorNoNft) r="Resolver set support (${resolver_set}) requires nftables, but nft binary cannot be found!";;
 		errorResolverNotSupported) r="Resolver set (${resolver_set}) is not supported on this system!";;
-		errorServiceDisabled) r="The ${packageName} service is currently disabled!";;
+		errorServiceDisabled) r="The ${packageName} service is currently disabled";;
 		errorNoWanGateway) r="The ${serviceName} service failed to discover WAN gateway!";;
 		errorNoWanInterface) r="The %s interface not found, you need to set the 'pbr.config.procd_wan_interface' option!";;
 		errorNoWanInterfaceHint) r="Refer to https://docs.openwrt.melmac.ca/pbr/#procd_wan_interface.";;
@@ -400,6 +403,7 @@ get_text() {
 		errorDefaultFw4ChainMissing) r="Default fw4 chain '%s' is missing!";;
 		errorRequiredBinaryMissing) r="Required binary '%s' is missing!";;
 		errorInterfaceRoutingUnknownDevType) r="Unknown IPv6 Link type for device '%s'!";;
+		errorUplinkDown) r="Uplink/WAN interface is still down, increase value of 'procd_boot_trigger_delay' option";;
 		warningInvalidOVPNConfig) r="Invalid OpenVPN config for '%s' interface.";;
 		warningResolverNotSupported) r="Resolver set (${resolver_set}) is not supported on this system.";;
 		warningPolicyProcessCMD) r="'%s'";;
@@ -442,13 +446,13 @@ process_url() {
 		dl_temp_file="$(mktemp -u -q -t "${packageName}_tmp.XXXXXXXX")"
 	done
 	if is_url_file "$url" && ! is_present 'curl'; then
-		state add 'errorSummary' 'errorFileSchemaRequiresCurl' "$url"
+		json add error 'errorFileSchemaRequiresCurl' "$url"
 	elif is_url_https "$url" && [ -z "$dl_https_supported" ]; then
-		state add 'errorSummary' 'errorDownloadUrlNoHttps' "$url"
+		json add error 'errorDownloadUrlNoHttps' "$url"
 	elif $dl_command "$url" "$dl_flag" "$dl_temp_file" 2>/dev/null; then
 		sed 'N;s/\n/ /;s/\s\+/ /g;' "$dl_temp_file"
 	else
-		state add 'errorSummary' 'errorDownloadUrl' "$url"
+		json add error 'errorDownloadUrl' "$url"
 	fi
 	rm -f "$dl_temp_file"
 }
@@ -534,7 +538,7 @@ load_environment() {
 		_check_dhcp_force() {
 			is_lan "$1" || return 0
 			if [ "$(uci_get dhcp "$1" force 0)" = '0' ]; then
-				state add 'warningSummary' 'warningDhcpLanForce' "$1"
+				json add warning 'warningDhcpLanForce' "$1"
 			fi
 		}
 		local i _ret=0
@@ -543,22 +547,22 @@ load_environment() {
 			uci_commit firewall
 		fi
 		if [ "$(readlink /sbin/ip)" != "$ip_full" ]; then
-			state add 'errorSummary' 'errorRequiredBinaryMissing' 'ip-full'
+			json add error 'errorRequiredBinaryMissing' 'ip-full'
 			_ret='1'
 		fi
 		if ! nft_call list table inet fw4; then
-			state add 'errorSummary' 'errorDefaultFw4TableMissing' 'fw4'
+			json add error 'errorDefaultFw4TableMissing' 'fw4'
 			_ret='1'
 		fi
 		if is_config_enabled 'dns_policy' || is_tor_running; then
 			if ! nft_call list chain inet fw4 dstnat; then
-				state add 'errorSummary' 'errorDefaultFw4ChainMissing' 'dstnat'
+				json add error 'errorDefaultFw4ChainMissing' 'dstnat'
 				_ret='1'
 			fi
 		fi
 		for i in $chainsList; do
 			if ! nft_call list chain inet fw4 "mangle_${i}"; then
-				state add 'errorSummary' 'errorDefaultFw4ChainMissing' "mangle_${i}"
+				json add error 'errorDefaultFw4ChainMissing' "mangle_${i}"
 				_ret='1'
 			fi
 		done
@@ -567,20 +571,25 @@ load_environment() {
 		return "$_ret"
 	}
 	local param="$1" validation_result="$2"
+	[ -z "$load_environment_flag" ] || return 0
+	json init
 	case "$param" in
 		on_boot|on_start)
 			output 1 "Loading environment ($param) "
 			load_package_config "$param"
 			if [ "$enabled" -eq '0' ]; then
 				output 1 "$_FAIL_\n"
-				state add 'errorSummary' 'errorServiceDisabled'
+				json add error 'errorServiceDisabled'
+				output_error "$(get_text 'errorServiceDisabled')"
+				output "Run the following commands before starting service again:\n"
+				output "uci set ${packageName}.config.enabled='1'; uci commit $packageName;\n"
 				return 1
 			fi
 			if [ -n "$validation_result" ] && [ "$validation_result" != '0' ]; then
 				output 1 "$_FAIL_\n"
-				output "${_ERROR_}: The $packageName config validation failed!\n"
+				json add error 'errorConfigValidation'
+				output_error "$(get_text 'errorConfigValidation')"
 				output "Please check if the '$packageConfigFile' contains correct values for config options.\n"
-				state add 'errorSummary' 'errorConfigValidation'
 				return 1
 			fi
 			_system_health_check || { output 1 "$_FAIL_\n"; return 1; }
@@ -599,6 +608,7 @@ load_environment() {
 			load_network "$param"
 		;;
 	esac
+	load_environment_flag=1
 }
 
 # shellcheck disable=SC2317
@@ -641,8 +651,8 @@ load_network() {
 is_wan_up() {
 	local sleepCount='1' param="$1"
 	if [ -z "$(uci_get network "$procd_wan_interface")" ]; then
-		state add 'errorSummary' 'errorNoWanInterface' "$procd_wan_interface"
-		state add 'errorSummary' 'errorNoWanInterfaceHint'
+		json add error 'errorNoWanInterface' "$procd_wan_interface"
+		json add error 'errorNoWanInterfaceHint'
 		return 1
 	fi
 	network_flush_cache
@@ -650,7 +660,7 @@ is_wan_up() {
 	if [ -n "$wanGW" ]; then
 		return 0
 	else
-		state add 'errorSummary' 'errorNoWanGateway'
+		json add error 'errorNoWanGateway'
 		return 1
 	fi
 }
@@ -687,7 +697,7 @@ nft_file() {
 				cp -f "$nftTempFile" "$nftPermFile"; then
 				output_okn
 			else
-				state add 'errorSummary' 'errorNftFileInstall' "$nftTempFile"
+				json add error 'errorNftFileInstall' "$nftTempFile"
 				output_failn
 			fi
 		;;
@@ -706,7 +716,7 @@ nftset() {
 	[ -x "$nft" ] || return 1
 
 	if [ "${#nftset4}" -gt '255' ]; then 
-		state add 'errorSummary' 'errorNftsetNameTooLong' "$nftset4"
+		json add error 'errorNftsetNameTooLong' "$nftset4"
 		return 1
 	fi
 
@@ -727,7 +737,7 @@ nftset() {
 				[ -z "$param4" ] && param4="$(resolveip_to_nftset4 "$param")"
 				[ -z "$param6" ] && param6="$(resolveip_to_nftset6 "$param")"
 				if [ -z "$param4" ] && [ -z "$param6" ]; then
-					state add 'errorSummary' 'errorFailedToResolve' "$param"
+					json add error 'errorFailedToResolve' "$param"
 				else
 					[ -n "$param4" ] && nft4 add element inet "$nftTable" "$nftset4" "{ $param4 }" && ipv4_error=0
 					[ -n "$param6" ] && nft6 add element inet "$nftTable" "$nftset6" "{ $param6 }" && ipv6_error=0
@@ -852,73 +862,49 @@ cleanup_sets() {
 	done
 }
 
-state() {
-	local action="$1" param="$2"
-	shift 2
-	local value="$*"
-	local line error_id error_extra array_name label
+json() {
+	local status message stats i
+	local action="$1" param="$2" value="$3"; shift 3; local info="$*";
+	[ "$param" = 'error' ] && param='errors'
+	[ "$param" = 'warning' ] && param='warnings'
+	{ json_load_file "$runningStatusFile" || json_init; } >/dev/null 2>&1
 	case "$action" in
-		add)
-			line="$(eval echo "\"\$$param\"")"
-			value="${line:+$line\n}${value}"
-# shellcheck disable=SC3037
-			eval "$param=\"$(echo -e "$value")\""
-		;;
-		json)
-			json_init
-			json_add_object "$packageName"
-			case "$param" in
-				errorSummary)
-					array_name='errors';;
-				warningSummary)
-					array_name='warnings';;
-			esac
-			json_add_array "$array_name"
-			if [ -n "$(eval echo "\"\$$param\"")" ]; then
-				while read -r line; do
-					if str_contains "$line" ' '; then
-						error_id="${line%% *}"
-						error_extra="${line#* }"
-					else
-						error_id="$line"
+		'get')
+			if json_select "$param" >/dev/null 2>&1; then
+				if [ -n "$value" ]; then
+					{
+					if json_select "$value"; then
+						json_get_var 'i' "${info:-code}"
+						json_select ..
 					fi
-					json_add_object "$array_name"
-					json_add_string 'id' "$error_id"
-					json_add_string 'extra' "$error_extra"
-					json_close_object
-				done <<EOF
-$(eval echo "\"\$$param\"")
-EOF
+					} >/dev/null 2>&1
+				else
+					json_get_keys i
+				fi
+				printf "%b" "$i"
+				json_select ..
 			fi
-			json_close_array
+			return
+		;;
+		'add')
+			{ json_select "$param" || json_add_array "$param"; } >/dev/null 2>&1
+			json_add_object ""
+			json_add_string 'code' "$value"
+			json_add_string 'info' "$info"
 			json_close_object
-			json_dump
+			json_select ..
 		;;
-		print)
-			[ -z "$(eval echo "\"\$$param\"")" ] && return 0
-			case "$param" in
-				errorSummary)
-					label="${_ERROR_}:";;
-				warningSummary)
-					label="${_WARNING_}:";;
-			esac
-				while read -r line; do
-					if str_contains "$line" ' '; then
-						error_id="${line%% *}"
-						error_extra="${line#* }"
-						printf "%b $(get_text "$error_id")\n" "$label" "$error_extra"
-					else
-						error_id="$line"
-						printf "%b $(get_text "$error_id")\n" "$label"
-					fi
-				done <<EOF
-$(eval echo "\"\$$param\"")
-EOF
-		;;
-		set)
-			eval "$param"='$value'
+		'init')
+			json_init
+			json_add_array 'errors'
+			json_close_array
+			json_add_array 'warnings'
+			json_close_array
 		;;
 	esac
+	mkdir -p "${runningStatusFile%/*}"
+	json_dump > "$runningStatusFile"
+	sync
 }
 
 resolver() {
@@ -980,14 +966,14 @@ resolver() {
 				;;
 				check_support)
 					if [ ! -x "$nft" ]; then
-						state add 'errorSummary' 'errorNoNft'
+						json add error 'errorNoNft'
 						return 1
 					fi
 					if check_dnsmasq_nftset; then
 						resolver_set_supported='true'
 						return 0
 					else
-						state add 'warningSummary' 'warningResolverNotSupported'
+						json add warning 'warningResolverNotSupported'
 						return 1
 					fi
 				;;
@@ -1094,20 +1080,20 @@ dns_policy_routing() {
 
 	if [ -z "${dest_dns_ipv4}${dest_dns_ipv6}" ]; then
 		processPolicyError='true'
-		state add 'errorSummary' 'errorPolicyProcessNoInterfaceDns' "'$dest_dns'"
+		json add error 'errorPolicyProcessNoInterfaceDns' "'$dest_dns'"
 		return 1
 	fi
 
 	if [ -z "$ipv6_enabled" ] && is_ipv6 "$(str_first_word "$src_addr")"; then
 		processPolicyError='true'
-		state add 'errorSummary' 'errorPolicyProcessNoIpv6' "$name"
+		json add error 'errorPolicyProcessNoIpv6' "$name"
 		return 1
 	fi
 
 	if { is_ipv4 "$(str_first_word "$src_addr")" && [ -z "$dest_dns_ipv4" ]; } || \
 		{ is_ipv6 "$(str_first_word "$src_addr")" && [ -z "$dest_dns_ipv6" ]; }; then 
 		processPolicyError='true'
-		state add 'errorSummary' 'errorPolicyProcessMismatchFamily' "${name}: '$src_addr' '$dest_dns'"
+		json add error 'errorPolicyProcessMismatchFamily' "${name}: '$src_addr' '$dest_dns'"
 		return 1
 	fi
 
@@ -1139,7 +1125,7 @@ dns_policy_routing() {
 					resolved_ipv4="$(resolveip_to_nftset4 "$d")"
 					resolved_ipv6="$(resolveip_to_nftset6 "$d")"
 					if [ -z "${resolved_ipv4}${resolved_ipv6}" ]; then
-						state add 'errorSummary' 'errorFailedToResolve' "$d"
+						json add error 'errorFailedToResolve' "$d"
 					else
 					[ -n "$resolved_ipv4" ] && inline_set_ipv4="${inline_set_ipv4:+$inline_set_ipv4, }$resolved_ipv4"
 					[ -n "$resolved_ipv6" ] && inline_set_ipv6="${inline_set_ipv6:+$inline_set_ipv6, }$resolved_ipv6"
@@ -1174,15 +1160,15 @@ dns_policy_routing() {
 
 		if [ -n "$ipv6_enabled" ] && [ "$ipv4_error" -eq '1' ] && [ "$ipv6_error" -eq '1' ]; then
 			processPolicyError='true'
-			state add 'errorSummary' 'errorPolicyProcessInsertionFailed' "$name"
-			state add 'errorSummary' 'errorPolicyProcessCMD' "nft $param4"
-			state add 'errorSummary' 'errorPolicyProcessCMD' "nft $param6"
+			json add error 'errorPolicyProcessInsertionFailed' "$name"
+			json add error 'errorPolicyProcessCMD' "nft $param4"
+			json add error 'errorPolicyProcessCMD' "nft $param6"
 			logger -t "$packageName" "ERROR: nft $param4"
 			logger -t "$packageName" "ERROR: nft $param6"
 		elif [ -z "$ipv6_enabled" ] && [ "$ipv4_error" -eq '1' ]; then
 			processPolicyError='true'
-			state add 'errorSummary' 'errorPolicyProcessInsertionFailedIpv4' "$name"
-			state add 'errorSummary' 'errorPolicyProcessCMD' "nft $param4"
+			json add error 'errorPolicyProcessInsertionFailedIpv4' "$name"
+			json add error 'errorPolicyProcessCMD' "nft $param4"
 			logger -t "$packageName" "ERROR: nft $param4"
 		fi
 	done
@@ -1203,7 +1189,7 @@ policy_routing() {
 	if [ -z "$ipv6_enabled" ] && \
 		{ is_ipv6 "$(str_first_word "$src_addr")" || is_ipv6 "$(str_first_word "$dest_addr")"; }; then
 		processPolicyError='true'
-		state add 'errorSummary' 'errorPolicyProcessNoIpv6' "$name"
+		json add error 'errorPolicyProcessNoIpv6' "$name"
 		return 1
 	fi
 
@@ -1223,14 +1209,14 @@ policy_routing() {
 		dest6="return"
 	else
 		processPolicyError='true'
-		state add 'errorSummary' 'errorPolicyProcessUnknownFwmark' "$iface"
+		json add error 'errorPolicyProcessUnknownFwmark' "$iface"
 		return 1
 	fi
 
 	# TODO: implement actual family mismatch check on lists
 #	if is_family_mismatch "$src_addr" "$dest_addr"; then 
 #		processPolicyError='true'
-#		state add 'errorSummary' 'errorPolicyProcessMismatchFamily' "${name}: '$src_addr' '$dest_addr'"
+#		json add error 'errorPolicyProcessMismatchFamily' "${name}: '$src_addr' '$dest_addr'"
 #		return 1
 #	fi
 
@@ -1249,7 +1235,7 @@ policy_routing() {
 			unset proto_i
 		elif ! is_supported_protocol "$proto_i"; then
 			processPolicyError='true'
-			state add 'errorSummary' 'errorPolicyProcessUnknownProtocol' "${name}: '$proto_i'"
+			json add error 'errorPolicyProcessUnknownProtocol' "${name}: '$proto_i'"
 			return 1
 		fi
 
@@ -1275,7 +1261,7 @@ policy_routing() {
 					resolved_ipv4="$(resolveip_to_nftset4 "$d")"
 					resolved_ipv6="$(resolveip_to_nftset6 "$d")"
 					if [ -z "${resolved_ipv4}${resolved_ipv6}" ]; then
-						state add 'errorSummary' 'errorFailedToResolve' "$d"
+						json add error 'errorFailedToResolve' "$d"
 					else
 					[ -n "$resolved_ipv4" ] && inline_set_ipv4="${inline_set_ipv4:+$inline_set_ipv4, }$resolved_ipv4"
 					[ -n "$resolved_ipv6" ] && inline_set_ipv6="${inline_set_ipv6:+$inline_set_ipv6, }$resolved_ipv6"
@@ -1316,7 +1302,7 @@ policy_routing() {
 						resolved_ipv4="$(resolveip_to_nftset4 "$d")"
 						resolved_ipv6="$(resolveip_to_nftset6 "$d")"
 						if [ -z "${resolved_ipv4}${resolved_ipv6}" ]; then
-							state add 'errorSummary' 'errorFailedToResolve' "$d"
+							json add error 'errorFailedToResolve' "$d"
 						else
 						[ -n "$resolved_ipv4" ] && inline_set_ipv4="${inline_set_ipv4:+$inline_set_ipv4, }$resolved_ipv4"
 						[ -n "$resolved_ipv6" ] && inline_set_ipv6="${inline_set_ipv6:+$inline_set_ipv6, }$resolved_ipv6"
@@ -1372,15 +1358,15 @@ policy_routing() {
 				nft6 "$param6" "$dest6" || ipv6_error='1'
 				if [ -n "$ipv6_enabled" ] && [ "$ipv4_error" -eq '1' ] && [ "$ipv6_error" -eq '1' ]; then
 					processPolicyError='true'
-					state add 'errorSummary' 'errorPolicyProcessInsertionFailed' "$name"
-					state add 'errorSummary' 'errorPolicyProcessCMD' "nft $param4 $dest4"
-					state add 'errorSummary' 'errorPolicyProcessCMD' "nft $param6 $dest6"
+					json add error 'errorPolicyProcessInsertionFailed' "$name"
+					json add error 'errorPolicyProcessCMD' "nft $param4 $dest4"
+					json add error 'errorPolicyProcessCMD' "nft $param6 $dest6"
 					logger -t "$packageName" "ERROR: nft $param4 $dest4"
 					logger -t "$packageName" "ERROR: nft $param6 $dest6"
 				elif [ -z "$ipv6_enabled" ] && [ "$ipv4_error" -eq '1' ]; then
 					processPolicyError='true'
-					state add 'errorSummary' 'errorPolicyProcessInsertionFailedIpv4' "$name"
-					state add 'errorSummary' 'errorPolicyProcessCMD' "nft $param4 $dest4"
+					json add error 'errorPolicyProcessInsertionFailedIpv4' "$name"
+					json add error 'errorPolicyProcessCMD' "nft $param4 $dest4"
 					logger -t "$packageName" "ERROR: nft $param4 $dest4"
 				fi
 			done
@@ -1404,15 +1390,15 @@ policy_routing() {
 			fi
 			if [ -n "$ipv6_enabled" ] && [ "$ipv4_error" -eq '1' ] && [ "$ipv6_error" -eq '1' ]; then
 				processPolicyError='true'
-				state add 'errorSummary' 'errorPolicyProcessInsertionFailed' "$name"
-				state add 'errorSummary' 'errorPolicyProcessCMD' "nft $param4"
-				state add 'errorSummary' 'errorPolicyProcessCMD' "nft $param6"
+				json add error 'errorPolicyProcessInsertionFailed' "$name"
+				json add error 'errorPolicyProcessCMD' "nft $param4"
+				json add error 'errorPolicyProcessCMD' "nft $param6"
 				logger -t "$packageName" "ERROR: nft $param4"
 				logger -t "$packageName" "ERROR: nft $param6"
 			elif [ -z "$ipv6_enabled" ] && [ "$ipv4_error" -eq '1' ]; then
 				processPolicyError='true'
-				state add 'errorSummary' 'errorPolicyProcessInsertionFailedIpv4' "$name"
-				state add 'errorSummary' 'errorPolicyProcessCMD' "nft $param4"
+				json add error 'errorPolicyProcessInsertionFailedIpv4' "$name"
+				json add error 'errorPolicyProcessCMD' "nft $param4"
 				logger -t "$packageName" "ERROR: nft $param4"
 			fi
 		fi
@@ -1447,11 +1433,11 @@ dns_policy_process() {
 	unset processDnsPolicyError
 	output 2 "Routing '$name' DNS to $dest_dns "
 	if [ -z "$src_addr" ]; then
-		state add 'errorSummary' 'errorPolicyNoSrcDest' "$name"
+		json add error 'errorPolicyNoSrcDest' "$name"
 		output_fail; return 1;
 	fi
 	if [ -z "$dest_dns" ]; then
-		state add 'errorSummary' 'errorPolicyNoDns' "$name"
+		json add error 'errorPolicyNoDns' "$name"
 		output_fail; return 1;
 	fi
 
@@ -1494,15 +1480,15 @@ policy_process() {
 	[ "$proto" = 'all' ] && unset proto
 	output 2 "Routing '$name' via $interface "
 	if [ -z "${src_addr}${src_port}${dest_addr}${dest_port}" ]; then
-		state add 'errorSummary' 'errorPolicyNoSrcDest' "$name"
+		json add error 'errorPolicyNoSrcDest' "$name"
 		output_fail; return 1;
 	fi
 	if [ -z "$interface" ]; then
-		state add 'errorSummary' 'errorPolicyNoInterface' "$name"
+		json add error 'errorPolicyNoInterface' "$name"
 		output_fail; return 1;
 	fi
 	if ! is_supported_interface "$interface"; then
-		state add 'errorSummary' 'errorPolicyUnknownInterface' "$name"
+		json add error 'errorPolicyUnknownInterface' "$name"
 		output_fail; return 1;
 	fi
 
@@ -1525,8 +1511,6 @@ policy_process() {
 	dest_addr="$j"
 
 	# TODO: if only src_addr is set add option 121 to dhcp leases?
-
-	# TODO: check if src_addr and dest_addr do not containt unprocessable values
 
 	local filter_list_src_addr='phys_dev phys_dev_negative mac_address mac_address_negative domain domain_negative ipv4 ipv4_negative ipv6 ipv6_negative'
 	local filter_list_dest_addr='domain domain_negative ipv4 ipv4_negative ipv6 ipv6_negative'
@@ -1557,14 +1541,14 @@ policy_process() {
 	for i in $src_addr; do
 		if ! str_contains "$processed_value_src_addr" "$i"; then
 			processPolicyError='true'
-			state add 'errorSummary' 'errorPolicyProcessUnknownEntry' "$name: $i"
+			json add error 'errorPolicyProcessUnknownEntry' "$name: $i"
 		fi
 	done
 
 	for i in $dest_addr; do
 		if ! str_contains "$processed_value_dest_addr" "$i"; then
 			processPolicyError='true'
-			state add 'errorSummary' 'errorPolicyProcessUnknownEntry' "$name: $i"
+			json add error 'errorPolicyProcessUnknownEntry' "$name: $i"
 		fi
 	done
 
@@ -1579,7 +1563,7 @@ interface_routing() {
 	local action="$1" tid="$2" mark="$3" iface="$4" gw4="$5" dev="$6" gw6="$7" dev6="$8" priority="$9"
 	local dscp s=0 i ipv4_error=1 ipv6_error=1
 	if [ -z "$tid" ] || [ -z "$mark" ] || [ -z "$iface" ]; then
-		state add 'errorSummary' 'errorInterfaceRoutingEmptyValues'
+		json add error 'errorInterfaceRoutingEmptyValues'
 		return 1
 	fi
 	case "$action" in
@@ -1641,7 +1625,7 @@ EOF
 							elif ip -6 address show dev "$dev6" | grep -q "POINTOPOINT"; then
 								try ip -6 route add default dev "$dev6" table "$tid" metric "$procd_wan6_metric" || ipv6_error=1
 							else
-								state add 'errorSummary' 'errorInterfaceRoutingUnknownDevType' "$dev6"
+								json add error 'errorInterfaceRoutingUnknownDevType' "$dev6"
 							fi
 #							if ! ip -6 route add default via "$gw6" dev "$dev6" table "$tid" >/dev/null 2>&1; then  
 #								try ip -6 route add default dev "$dev6" table "$tid" metric "$procd_wan6_metric" || ipv6_error=1
@@ -1732,7 +1716,7 @@ EOF
 						elif ip -6 address show dev "$dev6" | grep -q "POINTOPOINT"; then
 							try ip -6 route add default dev "$dev6" table "$tid" metric "$procd_wan6_metric" || ipv6_error=1
 						else
-							state add 'errorSummary' 'errorInterfaceRoutingUnknownDevType' "$dev6"
+							json add error 'errorInterfaceRoutingUnknownDevType' "$dev6"
 						fi
 						while read -r i; do
 							# shellcheck disable=SC2086
@@ -1835,7 +1819,7 @@ process_interface() {
 	[ "$((ifaceMark))" -gt "$((fw_mask))" ] && return 1
 
 	if is_ovpn "$iface" && ! is_ovpn_valid "$iface"; then
-		: || state add 'warningSummary' 'warningInvalidOVPNConfig' "$iface"
+		: || json add warning 'warningInvalidOVPNConfig' "$iface"
 	fi
 
 	network_get_device dev "$iface"
@@ -1880,7 +1864,7 @@ process_interface() {
 				gatewaySummary="${gatewaySummary}${displayText}${dispStatus:+ $dispStatus}\n"
 				if is_netifd_table_interface "$iface"; then output_okb; else output_ok; fi
 			else
-				state add 'errorSummary' 'errorFailedSetup' "$displayText"
+				json add error 'errorFailedSetup' "$displayText"
 				output_fail
 			fi
 		;;
@@ -1957,7 +1941,7 @@ process_interface() {
 					gatewaySummary="${gatewaySummary}${displayText}${dispStatus:+ $dispStatus}\n"
 					if is_netifd_table_interface "$iface"; then output_okb; else output_ok; fi
 				else
-					state add 'errorSummary' 'errorFailedReload' "$displayText"
+					json add error 'errorFailedReload' "$displayText"
 					output_fail
 				fi
 			else
@@ -1975,26 +1959,26 @@ user_file_process() {
 	local shellBin="${SHELL:-/bin/ash}"
 	[ "$enabled" -gt '0' ] || return 0
 	if [ ! -s "$path" ]; then
-		state add 'errorSummary' 'errorUserFileNotFound' "$path"
+		json add error 'errorUserFileNotFound' "$path"
 		output_fail
 		return 1
 	fi
 	if ! $shellBin -n "$path"; then
-		state add 'errorSummary' 'errorUserFileSyntax' "$path"
+		json add error 'errorUserFileSyntax' "$path"
 		output_fail
 		return 1
 	fi
 	if is_bad_user_file_nft_call "$path"; then
-		state add 'errorSummary' 'errorIncompatibleUserFile' "$path"
+		json add error 'errorIncompatibleUserFile' "$path"
 		output_fail
 		return 1
 	fi
 	output 2 "Running $path "
 # shellcheck disable=SC1090
 	if ! . "$path"; then
-		state add 'errorSummary' 'errorUserFileRunning' "$path"
+		json add error 'errorUserFileRunning' "$path"
 		if grep -q -w 'curl' "$path" && ! is_present 'curl'; then
-			state add 'errorSummary' 'errorUserFileNoCurl' "$path"
+			json add error 'errorUserFileNoCurl' "$path"
 		fi
 		output_fail
 		return 1
@@ -2034,12 +2018,14 @@ on_interface_reload() {
 }
 
 start_service() {
-	local resolverStoredHash resolverNewHash i param="$1" reloadedIface
+	local resolverStoredHash resolverNewHash i param="$1" reloadedIface k
 
 	[ -n "$pbr_boot_flag" ] && return 0
 	[ "$param" = 'on_boot' ] && return 0
 	load_environment "${param:-on_start}" "$(load_validate_config)" || return 1
-	is_wan_up "$param" || { output "${_ERROR_}: Uplink/WAN interface is still down, increase value of 'procd_boot_trigger_delay' option!\n";  return 1; }
+
+	output "Processing environment (${param:-on_start}) "
+	is_wan_up "$param" || { output_error "$(get_text 'errorUplinkDown')";  return 1; }
 
 	process_interface 'all' 'prepare'
 	config_foreach process_interface 'interface' 'pre_init'
@@ -2096,6 +2082,7 @@ start_service() {
 
 	case $serviceStartTrigger in
 		on_interface_reload)
+	output_okn
 			output 1 "Reloading Interface: $reloadedIface "
 			json_add_array 'gateways'
 			process_interface 'all' 'prepare'
@@ -2113,6 +2100,7 @@ start_service() {
 			cleanup_marking_chains
 			cleanup_rt_tables
 			nft_file 'create'
+	output_okn
 			output 1 'Processing interfaces '
 			json_add_array 'gateways'
 			process_interface 'all' 'prepare'
@@ -2156,23 +2144,38 @@ start_service() {
 	esac
 
 	if [ -z "$gatewaySummary" ]; then
-		state add 'errorSummary' 'errorNoGateways'
+		json add error 'errorNoGateways'
 	fi
+	json_add_int 'packageCompat' "$packageCompat"
 	json_add_object 'status'
 	[ -n "$gatewaySummary" ] && json_add_string 'gateways' "$gatewaySummary"
-	[ -n "$errorSummary" ] && json_add_string 'errors' "$errorSummary"
-	[ -n "$warningSummary" ] && json_add_string 'warnings' "$warningSummary"
+	json_close_object
+	json_add_array 'errors'
+		for k in $(json get errors); do
+			json_add_object "$k"
+			json_add_string 'code' "$(json get error "$k" 'code')"
+			json_add_string 'info' "$(json get error "$k" 'info')"
+			json_close_object
+		done
+	json_close_array
+	json_add_array 'warnings'
+		for k in $(json get warnings); do
+			json_add_object "$k"
+			json_add_string 'code' "$(json get warning "$k" 'code')"
+			json_add_string 'info' "$(json get warning "$k" 'info')"
+			json_close_object
+		done
+	json_close_array
 	if [ "$strict_enforcement" -ne '0' ] && str_contains "$gatewaySummary" '0.0.0.0'; then
 		json_add_string 'mode' 'strict'
 	fi
-	json_close_object
 	procd_close_data
 	procd_close_instance
 }
 
 service_started() {
 	[ -n "$pbr_boot_flag" ] && return 0
-
+	local error warning c
 	if nft_file 'exists'; then
 		procd_set_config_changed firewall
 		if nft_file 'exists'; then
@@ -2184,12 +2187,26 @@ service_started() {
 	else
 		[ -n "$gatewaySummary" ] && output "$serviceName (nft mode) started with gateways:\n${gatewaySummary}"
 	fi
-	state print 'errorSummary'
-	state print 'warningSummary'
+	error="$(json get error)"
+	warning="$(json get warning)"
+	if [ -n "$error" ]; then
+		for c in $error; do
+			code="$(json get error "$c" 'code')"
+			info="$(json get error "$c" 'info')"
+			output_error "$(get_text "$code" "$info")"
+		done
+	fi
+	if [ -n "$warning" ]; then
+		for c in $warning; do
+			code="$(json get warning "$c" 'code')"
+			info="$(json get warning "$c" 'info')"
+			output_warning "$(get_text "$code" "$info")"
+		done
+	fi
 	touch "$packageLockFile"
-	if [ -n "$errorSummary" ]; then
+	if [ -n "$error" ]; then
 		return 2
-	elif [ -n "$warningSummary" ]; then
+	elif [ -n "$warning" ]; then
 		return 1
 	else
 		return 0
