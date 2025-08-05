@@ -870,20 +870,19 @@ json() {
 	{ json_load_file "$runningStatusFile" || json_init; } >/dev/null 2>&1
 	case "$action" in
 		'get')
-			if json_select "$param" >/dev/null 2>&1; then
-				if [ -n "$value" ]; then
-					{
-					if json_select "$value"; then
-						json_get_var 'i' "${info:-code}"
-						json_select ..
-					fi
-					} >/dev/null 2>&1
-				else
-					json_get_keys i
+			json_select "$param" >/dev/null 2>&1 || return
+			if [ -n "$value" ]; then
+				{
+				if json_select "$value"; then
+					json_get_var 'i' "${info:-code}"
+					json_select ..
 				fi
-				printf "%b" "$i"
-				json_select ..
+				} >/dev/null 2>&1
+			else
+				json_get_keys i
 			fi
+			printf "%b" "$i"
+			json_select ..
 			return
 		;;
 		'add')
