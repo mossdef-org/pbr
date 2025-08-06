@@ -44,21 +44,8 @@ sed -i "s/option wan_mark '0x\(.*\)'/option wan_mark '\1'/g" /etc/config/pbr
 sed -i "s|option path '/etc/pbr/|option path '/usr/share/pbr/|g" /etc/config/pbr
 sed -i "/procd_lan_interface/d" /etc/config/pbr
 
-# add firewall include file to fw4 config
-# shellcheck source=../../usr/share/pbr/firewall.include
-if [ -s '/usr/share/pbr/firewall.include' ]; then
-uci -q batch <<-EOT
-	delete firewall.pbr
-	set firewall.pbr='include'
-	set firewall.pbr.fw4_compatible='1'
-	set firewall.pbr.type='script'
-	set firewall.pbr.path='/usr/share/pbr/firewall.include'
-	commit firewall
-EOT
-fi
-
 # Transition from pre-1.1.7 versions
-# shellcheck disable=SC2317
+# shellcheck disable=SC2317,SC2329
 _remove_wg_server_client() {
 	local path
 	config_get path "$1" 'path'
