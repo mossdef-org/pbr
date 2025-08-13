@@ -136,8 +136,8 @@ torTrafficPort=
 . /usr/share/libubox/jshn.sh
 
 debug() { local i j; for i in "$@"; do eval "j=\$$i"; logger "${packageName:+-t $packageName}" "${i}: ${j} "; done; }
-str_contains() { [ -n "$1" ] && [ -n "$2" ] && [ "${1//$2}" != "$1" ]; }
-str_contains_word() { echo "$1" | grep -q -w "$2"; }
+str_contains() { [ "${1//$2}" != "$1" ]; }
+str_contains_word() { echo "$1" | grep -qw "$2"; }
 str_extras_to_underscore() { echo "$1" | tr '[\. ~`!@#$%^&*()\+/,<>?//;:]' '_'; }
 str_extras_to_space() { echo "$1" | tr ',;{}' ' '; }
 str_first_value_interface() { local i; for i in $1; do is_supported_interface "$i" && { echo "$i"; break; }; done; }
