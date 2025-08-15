@@ -405,6 +405,7 @@ get_text() {
 		errorRequiredBinaryMissing) printf "Required binary '%s' is missing" "$@";;
 		errorInterfaceRoutingUnknownDevType) printf "Unknown IPv6 Link type for device '%s'" "$@";;
 		errorUplinkDown) printf "Uplink/WAN interface is still down, increase value of 'procd_boot_trigger_delay' option";;
+		errorSummary) printf "Errors encountered, please check %s" "https://docs.openwrt.melmac.ca/pbr/#GettingHelp";;
 		warningInvalidOVPNConfig) printf "Invalid OpenVPN config for '%s' interface" "$@";;
 		warningResolverNotSupported) printf "Resolver set (%s) is not supported on this system" "$resolver_set";;
 		warningPolicyProcessCMD) printf "'%s'" "$@";;
@@ -414,6 +415,7 @@ get_text() {
 		warningOutdatedWebUIApp) printf "The WebUI application is outdated (version %s), please update it" "$@";;
 		warningDnsmasqInstanceNoConfdir) printf "Dnsmasq instance '%s' targeted in settings, but it doesn't have its own confdir" "$@";;
 		warningDhcpLanForce) printf "Please set 'dhcp.%s.force=1' to speed up service start-up" "$@";;
+		warningSummary) printf "Warnings encountered, please check %s" "https://docs.openwrt.melmac.ca/pbr/#WarningMessagesDetails";;
 		*) printf "Unknown error/warning '%s'" "$@";;
 	esac
 }
@@ -2201,6 +2203,7 @@ service_started() {
 			info="$(json get error "$c" 'info')"
 			output_error "$(get_text "$code" "$info")"
 		done
+		output_error "$(get_text 'errorSummary')"
 	fi
 	if [ -n "$warning" ]; then
 		for c in $warning; do
@@ -2208,6 +2211,7 @@ service_started() {
 			info="$(json get warning "$c" 'info')"
 			output_warning "$(get_text "$code" "$info")"
 		done
+		output_warning "$(get_text 'warningSummary')"
 	fi
 	touch "$packageLockFile"
 	if [ -n "$error" ]; then
