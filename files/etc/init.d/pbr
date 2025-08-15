@@ -503,23 +503,21 @@ load_package_config() {
 	[ "$procd_boot_trigger_delay" -lt '1000' ] && procd_boot_trigger_delay='1000'
 
 	[ "$debug_dnsmasq" != '1' ]          && unset debug_dnsmasq
+
+	local nft_set_flags
+	case "${nft_set_flags_interval}:${nft_set_flags_timeout}" in
+		1:1) nft_set_flags="flags interval, timeout${nft_set_timeout:+; timeout $nft_set_timeout}";;
+		1:0) nft_set_flags='flags interval';;
+		0:1) nft_set_flags="flags timeout${nft_set_timeout:+; timeout $nft_set_timeout}";;
+		0:0) nft_set_flags='';;
+	esac
+
 	[ "$nft_rule_counter" != '1' ]       && unset nft_rule_counter
 	[ "$nft_set_auto_merge" != '1' ]     && unset nft_set_auto_merge
 	[ "$nft_set_counter" != '1' ]        && unset nft_set_counter
 	[ "$nft_set_flags_interval" != '1' ] && unset nft_set_flags_interval
 	[ "$nft_set_flags_timeout" != '1' ]  && unset nft_set_flags_timeout
 	[ -z "${nft_set_flags_timeout}${nft_set_timeout}" ] && unset nft_set_gc_interval
-	local nft_set_flags
-	if [ -n "${nft_set_flags_interval}${nft_set_flags_timeout}" ]; then
-		[ -n "$nft_set_flags_interval" ] && nft_set_flags='flags interval'
-		if [ -n "$nft_set_flags_timeout" ]; then
-			if [ -n "$nft_set_flags" ]; then
-				nft_set_flags="${nft_set_flags}, timeout"
-			else
-				nft_set_flags='flags timeout'
-			fi
-		fi
-	fi
 
 	nft_rule_params="${nft_rule_counter:+counter}"
 
@@ -529,7 +527,7 @@ load_package_config() {
 		${nft_set_flags:+ $nft_set_flags;} \
 		${nft_set_gc_interval:+ gc_interval "$nft_set_gc_interval";} \
 		${nft_set_policy:+ policy "$nft_set_policy";} \
-		${nft_set_timeout:+ timeout "$nft_set_timeout";} \
+		${nft_set_timeout:+ timeout "$ ";} \
 		"
 }
 
@@ -767,6 +765,7 @@ nftset() {
 				esac
 		;;
 		create_dnsmasq_set)
+			local dnsmasq_nft_set_params=""
 			nft4 add set inet "$nftTable" "$nftset4" "{ type ipv4_addr; $nft_set_params comment \"$comment\";}" && ipv4_error=0
 			nft6 add set inet "$nftTable" "$nftset6" "{ type ipv6_addr; $nft_set_params comment \"$comment\";}" && ipv6_error=0
 		;;
