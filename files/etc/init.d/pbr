@@ -502,7 +502,7 @@ load_package_config() {
 	is_integer "$procd_boot_trigger_delay" || procd_boot_trigger_delay='5000'
 	[ "$procd_boot_trigger_delay" -lt '1000' ] && procd_boot_trigger_delay='1000'
 
-	[ "$debug_dnsmasq" != '1' ]          && unset debug_dnsmasq
+	[ "$debug_dnsmasq" != '1' ] && unset debug_dnsmasq
 
 	local nft_set_flags
 	case "${nft_set_flags_interval}:${nft_set_flags_timeout}" in
@@ -869,8 +869,10 @@ cleanup_sets() {
 json() {
 	local status message stats i
 	local action="$1" param="$2" value="$3"; shift 3; local info="$*";
+	local _current_namespace="$_JSON_PREFIX"
 	[ "$param" = 'error' ] && param='errors'
 	[ "$param" = 'warning' ] && param='warnings'
+	json_set_namespace "${packageName}_"
 	{ json_load_file "$runningStatusFile" || json_init; } >/dev/null 2>&1
 	case "$action" in
 		'get')
@@ -887,6 +889,7 @@ json() {
 			fi
 			printf "%b" "$i"
 			json_select ..
+			json_set_namespace "$_current_namespace"
 			return
 		;;
 		'add')
@@ -908,6 +911,7 @@ json() {
 	mkdir -p "${runningStatusFile%/*}"
 	json_dump > "$runningStatusFile"
 	sync
+	json_set_namespace "$_current_namespace"
 }
 
 resolver() {
