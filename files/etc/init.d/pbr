@@ -101,12 +101,11 @@ nft_set_policy=
 nft_set_timeout=
 
 # run-time
-loadEnvironmentFlag=
 aghConfigFile='/etc/AdGuardHome/AdGuardHome.yaml'
 gatewaySummary=
 wanIface4=
 wanIface6=
-dnsmasqFileList=
+dnsmasqFileList="$dnsmasqFileDefault"
 ifaceMark=
 ifaceTableID=
 ifacePriority=
@@ -315,8 +314,8 @@ ipv4_leases_to_nftset(){ [ -s '/tmp/dhcp.leases' ] && awk -v arg="$1" 'BEGIN{fs=
 ipv6_leases_to_nftset(){ [ -s '/tmp/hosts/odhcpd' ] && awk -v arg="$1" 'BEGIN{fs=""};$0~arg{printf fs$1;fs=","}' /tmp/hosts/odhcpd;}
 # shellcheck disable=SC3037
 ports_to_nftset() { echo -en "$1"; }
-get_mark_nft_chains() { [ -x "$nft" ] && "$nft" list table inet "$nftTable" 2>/dev/null | grep chain | grep "${nftPrefix}_mark_" | awk '{ print $2 }'; }
-get_nft_sets() { [ -x "$nft" ] && "$nft" list table inet "$nftTable" 2>/dev/null | grep 'set' | grep "${nftPrefix}_" | awk '{ print $2 }'; }
+get_mark_nft_chains() { "$nft" list table inet "$nftTable" 2>/dev/null | grep chain | grep "${nftPrefix}_mark_" | awk '{ print $2 }'; }
+get_nft_sets() { "$nft" list table inet "$nftTable" 2>/dev/null | grep 'set' | grep "${nftPrefix}_" | awk '{ print $2 }'; }
 __ubus_get() { ubus call service list "{ 'name': '$packageName' }" | jsonfilter -e "$1"; }
 ubus_get_status() { __ubus_get "@.${packageName}.instances.main.data.status.${1}"; }
 ubus_get_interface() { __ubus_get "@.${packageName}.instances.main.data.gateways[@.name='${1}']${2:+.$2}"; }
@@ -560,6 +559,10 @@ load_environment() {
 			done
 		}
 		local i _ret=0
+		if ! check_nft; then
+			json add error 'errorNoNft'
+			_ret='1'
+		fi
 		if [ "$(uci_get 'firewall' 'defaults' 'auto_includes')" = '0' ]; then
 			uci_remove 'firewall' 'defaults' 'auto_includes'
 			uci_commit firewall
@@ -589,7 +592,6 @@ load_environment() {
 		return "$_ret"
 	}
 	local param="$1" validation_result="$2"
-	[ -z "$loadEnvironmentFlag" ] || return 0
 	case "$param" in
 		on_boot|on_start)
 			json init
@@ -627,7 +629,6 @@ load_environment() {
 			load_network "$param"
 		;;
 	esac
-	loadEnvironmentFlag=1
 }
 
 # shellcheck disable=SC2317
@@ -670,7 +671,7 @@ load_network() {
 }
 
 is_wan_up() {
-	local sleepCount='1' param="$1"
+	local param="$1"
 	if [ -z "$(uci_get network "$uplink_interface")" ]; then
 		json add error 'errorNoUplinkInterface' "$uplink_interface"
 		json add error 'errorNoUplinkInterfaceHint' "$(get_url '#uplink_interface')"
@@ -686,10 +687,10 @@ is_wan_up() {
 	fi
 }
 
-nft_call() { [ -x "$nft" ] && "$nft" "$@" >/dev/null 2>&1; }
+nft_call() { "$nft" "$@" >/dev/null 2>&1; }
 nft_file() {
 	local i
-	[ -x "$nft" ] || return 1
+
 	case "$1" in
 		add|add_command)
 			shift
@@ -724,7 +725,7 @@ nft_file() {
 		;;
 	esac
 }
-nft() { [ -x "$nft" ] && [ -n "$*" ] && nft_file 'add_command' "$@"; }
+nft() { [ -n "$*" ] && nft_file 'add_command' "$@"; }
 nft4() { nft "$@"; }
 nft6() { [ -n "$ipv6_enabled" ] || return 0; nft "$@"; }
 nftset() {
@@ -733,8 +734,6 @@ nftset() {
 	local ipv4_error=1 ipv6_error=1
 	nftset4="${nftPrefix}${iface:+_$iface}_4${target:+_$target}${type:+_$type}${uid:+_$uid}"
 	nftset6="${nftPrefix}${iface:+_$iface}_6${target:+_$target}${type:+_$type}${uid:+_$uid}"
-
-	[ -x "$nft" ] || return 1
 
 	if [ "${#nftset4}" -gt '255' ]; then 
 		json add error 'errorNftsetNameTooLong' "$nftset4"
@@ -783,7 +782,6 @@ nftset() {
 				esac
 		;;
 		create_dnsmasq_set)
-			local dnsmasq_nftSetParams=""
 			nft4 add set inet "$nftTable" "$nftset4" "{ type ipv4_addr; $nftSetParams comment \"$comment\";}" && ipv4_error=0
 			nft6 add set inet "$nftTable" "$nftset6" "{ type ipv6_addr; $nftSetParams comment \"$comment\";}" && ipv6_error=0
 		;;
@@ -990,10 +988,6 @@ resolver() {
 					nftset 'create_dnsmasq_set' "$iface" "$target" "$type" "$uid" "$name" "$value"
 				;;
 				check_support)
-					if [ ! -x "$nft" ]; then
-						json add error 'errorNoNft'
-						return 1
-					fi
 					if check_dnsmasq_nftset; then
 						resolverSetSupported='true'
 						return 0
@@ -1014,7 +1008,7 @@ resolver() {
 					if [ -n "$resolverSetSupported" ]; then
 						local dfl
 						for dfl in $dnsmasqFileList; do
-							[ "${dfl%/*}" = '/var/run' ] && continue
+							[ "$dfl" = "$dnsmasqFileDefault" ] && continue
 							mkdir -p "${dfl%/*}"
 							chmod -R 660 "${dfl%/*}"
 							chown -R root:dnsmasq "${dfl%/*}"
@@ -1034,8 +1028,16 @@ resolver() {
 							|| _resolver_dnsmasq_confdir "$i"
 						done
 					fi
-					str_contains "$dnsmasqFileList" "$dnsmasqFileDefault" || \
-						dnsmasqFileList="${dnsmasqFileList:+$dnsmasqFileList }${dnsmasqFileDefault}"
+					local dfl
+					for dfl in $dnsmasqFileList; do
+						[ "$dfl" = "$dnsmasqFileDefault" ] && continue
+						mkdir -p "${dfl%/*}"
+						chmod -R 660 "${dfl%/*}"
+						chown -R root:dnsmasq "${dfl%/*}"
+						touch "$dfl"
+						chmod 660 "$dfl"
+						chown root:dnsmasq "$dfl"
+					done
 				;;
 				init) :;;
 				init_end) :;;
@@ -2216,16 +2218,7 @@ service_started() {
 	else
 		[ -n "$gatewaySummary" ] && output "$serviceName (nft mode) started with gateways:\n${gatewaySummary}"
 	fi
-	error="$(json get error)"
 	warning="$(json get warning)"
-	if [ -n "$error" ]; then
-		for c in $error; do
-			code="$(json get error "$c" 'code')"
-			info="$(json get error "$c" 'info')"
-			output_error "$(get_text "$code" "$info")"
-		done
-		output_error "$(get_text 'errorSummary' "$(get_url '#WarningMessagesDetails')")"
-	fi
 	if [ -n "$warning" ]; then
 		for c in $warning; do
 			code="$(json get warning "$c" 'code')"
@@ -2233,6 +2226,15 @@ service_started() {
 			output_warning "$(get_text "$code" "$info")"
 		done
 		output_warning "$(get_text 'warningSummary' "$(get_url '#ErrorMessagesDetails')")"
+	fi
+	error="$(json get error)"
+	if [ -n "$error" ]; then
+		for c in $error; do
+			code="$(json get error "$c" 'code')"
+			info="$(json get error "$c" 'info')"
+			output_error "$(get_text "$code" "$info")"
+		done
+		output_error "$(get_text 'errorSummary' "$(get_url '#WarningMessagesDetails')")"
 	fi
 	touch "$packageLockFile"
 	if [ -n "$error" ]; then
@@ -2269,7 +2271,7 @@ service_triggers() {
 				output 2 "Setting interface trigger for $n "
 				procd_add_interface_trigger "interface.*" "$n" "/etc/init.d/${packageName}" on_interface_reload "$n" && output_ok || output_fail
 			done
-			output '\n'
+			output 1 '\n'
 		procd_close_trigger
 	fi
 	if [ "$serviceStartTrigger" = 'on_start' ]; then
