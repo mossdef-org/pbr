@@ -2417,7 +2417,7 @@ status_service() {
 	done
 	if [ -s "$dnsmasqFileDefault" ]; then
 		echo "$_SEPARATOR_"
-		echo "dnsmasq sets"
+		echo "dnsmasq nft sets in $dnsmasqFileDefault"
 		cat "$dnsmasqFileDefault"
 	fi
 #	echo "$_SEPARATOR_"
