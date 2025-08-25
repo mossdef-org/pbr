@@ -6,7 +6,7 @@
 # sysctl net.ipv4.conf.all.rp_filter=1
 
 # shellcheck disable=SC2034
-START=94
+START=50
 # shellcheck disable=SC2034
 USE_PROCD=1
 
