@@ -2113,7 +2113,7 @@ start_service() {
 
 	case $serviceStartTrigger in
 		on_interface_reload)
-	output_okn
+			output_okn
 			output 1 "Reloading Interface: $reloadedIface "
 			json_add_array 'gateways'
 			process_interface 'all' 'prepare'
@@ -2131,7 +2131,7 @@ start_service() {
 			cleanup_marking_chains
 			cleanup_rt_tables
 			nft_file 'create'
-	output_okn
+			output_okn
 			output 1 'Processing interfaces '
 			json_add_array 'gateways'
 			process_interface 'all' 'prepare'
