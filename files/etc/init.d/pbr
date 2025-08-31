@@ -2203,10 +2203,12 @@ start_service() {
 	procd_close_instance
 }
 
+service_running() { procd_set_config_changed firewall; }
 service_started() {
 	[ -n "$pbrBootFlag" ] && return 0
 	local error warning c
 	if nft_file 'exists'; then
+		procd_set_config_changed firewall
 		[ -n "$gatewaySummary" ] && output "$serviceName (fw4 nft file mode) started with gateways:\n${gatewaySummary}"
 	else
 		output "$serviceName FAILED TO START in fw4 nft file mode!!!"
@@ -2239,6 +2241,7 @@ service_started() {
 		return 0
 	fi
 }
+service_stopped() { procd_set_config_changed firewall; }
 
 # shellcheck disable=SC2015
 service_triggers() {
@@ -2380,7 +2383,7 @@ status_service() {
 	while [ "${1:0:1}" = "-" ]; do param="${1//-/}"; eval "set_$param=1"; shift; done
 	[ -e "/var/${packageName}-support" ] && rm -f "/var/${packageName}-support"
 # shellcheck disable=SC2154
-	status="$serviceName running on $dist $vers."
+	status="$serviceName installed on $dist $vers."
 	[ -n "$wanIface4" ] && status="$status WAN (IPv4): ${wanIface4}/${dev}/${wanGW4:-0.0.0.0}."
 	[ -n "$wanIface6" ] && status="$status WAN (IPv6): ${wanIface6}/${dev6}/${wanGW6:-::/0}."
 
