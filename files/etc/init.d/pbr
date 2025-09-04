@@ -41,7 +41,6 @@ readonly packageDebugFile="/var/run/${packageName}.debug"
 readonly packageLockFile="/var/run/${packageName}.lock"
 readonly dnsmasqFileDefault="/var/run/${packageName}.dnsmasq"
 readonly runningStatusFile="/dev/shm/${packageName}.status.json"
-readonly runningStatusFileLock="/var/lock/${packageName}.lock"
 readonly _OK_='\033[0;32m\xe2\x9c\x93\033[0m'
 readonly __OK__='\033[0;32m[\xe2\x9c\x93]\033[0m'
 readonly _OKB_='\033[1;34m\xe2\x9c\x93\033[0m'
@@ -144,7 +143,7 @@ str_first_value_ipv4() { local i; for i in $1; do is_ipv4 "$i" && { echo "$i"; b
 str_first_value_ipv6() { local i; for i in $1; do is_ipv6 "$i" && { echo "$i"; break; }; done; }
 str_first_word() { echo "${1%% *}"; }
 str_replace() { echo "${1//$2/$3}"; }
-str_to_dnsmsaq_nftset() { echo "$1" | tr ' ' '/'; }
+str_to_dnsmasq_nftset() { echo "$1" | tr ' ' '/'; }
 str_to_lower() { echo "$1" | tr 'A-Z' 'a-z'; }
 str_to_upper() { echo "$1" | tr 'a-z' 'A-Z'; }
 # shellcheck disable=SC3060
@@ -288,11 +287,11 @@ is_url_ftp() { [ "$1" != "${1#ftp://}" ]; }
 is_url_http() { [ "$1" != "${1#http://}" ]; }
 is_url_https() { [ "$1" != "${1#https://}" ]; }
 is_wan() { [ "$1" = "$wanIface4" ] || { [ "${1##wan}" != "$1" ] && [ "${1##wan6}" = "$1" ]; } || [ "${1%%wan}" != "$1" ]; }
-is_wan6() { [ -n "$wanIface6" ] && [ "$1" = "$wanIface6" ] || [ "${1/#wan6}" != "$1" ] || [ "${1/%wan6}" != "$1" ]; }
+is_wan6() { [ -n "$wanIface6" ] && [ "$1" = "$wanIface6" ] || [ "${1##wan6}" != "$1" ] || [ "${1%%wan6}" != "$1" ]; }
 is_wg() { local p lp; network_get_protocol p "$1"; uci_get_listen_port lp "$1"; [ -z "$lp" ] && [ "${p:0:9}" = "wireguard" ]; }
 is_wg_server() { local p lp; network_get_protocol p "$1"; uci_get_listen_port lp "$1"; [ -n "$lp" ] && [ "${p:0:9}" = "wireguard" ]; }
 is_xray() { [ -n "$(get_xray_traffic_port "$1")" ]; }
-dnsmasq_kill() { killall -q -s HUP dnsmasq; }
+dnsmasq_kill() { pidof dnsmasq >/dev/null && kill -HUP $(pidof dnsmasq); }
 dnsmasq_restart() { output 3 'Restarting dnsmasq '; if /etc/init.d/dnsmasq restart >/dev/null 2>&1; then output_okn; else output_failn; fi; }
 # shellcheck disable=SC2155
 get_ss_traffic_ports() { local i="$(jsonfilter -i "$ssConfigFile" -q -e "@.inbounds[*].port")"; echo "${i:-443}"; }
@@ -448,7 +447,7 @@ process_url() {
 		unset dl_https_supported
 	fi
 	while [ -z "$dl_temp_file" ] || [ -e "$dl_temp_file" ]; do
-		dl_temp_file="$(mktemp -u -q -t "${packageName}_tmp.XXXXXXXX")"
+		dl_temp_file="$(mktemp -q -t "${packageName}_tmp.XXXXXXXX")"
 	done
 	if is_url_file "$url" && ! is_present 'curl'; then
 		json add error 'errorFileSchemaRequiresCurl' "$url"
@@ -468,7 +467,7 @@ load_package_config() {
 	config_load "$packageName"
 	config_get_bool debug_dnsmasq             'config' 'debug_dnsmasq' '0'
 	config_get_bool enabled                   'config' 'enabled' '0'
-	config_get      fw_mask                   'config' 'fw_mask' 'ff0000'
+	config_get      fw_mask                   'config' 'fw_mask' '00ff0000'
 	config_get      icmp_interface            'config' 'icmp_interface'
 	config_get      ignored_interface         'config' 'ignored_interface'
 	config_get_bool ipv6_enabled              'config' 'ipv6_enabled' '0'
@@ -491,7 +490,7 @@ load_package_config() {
 	config_get      uplink_interface          'config' 'uplink_interface'  'wan'
 	config_get      uplink_interface6         'config' 'uplink_interface6' 'wan6'
 	config_get      uplink_ip_rules_priority  'config' 'uplink_ip_rules_priority' '30000'
-	config_get      uplink_mark               'config' 'uplink_mark' '010000'
+	config_get      uplink_mark               'config' 'uplink_mark' '00010000'
 
 	fw_mask="0x${fw_mask}"
 	uplink_mark="0x${uplink_mark}"
@@ -530,7 +529,7 @@ load_package_config() {
 		${nft_set_flags:+ $nft_set_flags;} \
 		${nft_set_gc_interval:+ gc_interval "$nft_set_gc_interval";} \
 		${nft_set_policy:+ policy "$nft_set_policy";} \
-		${nft_set_timeout:+ timeout "$ ";} \
+		${nft_set_timeout:+ timeout "$nft_set_timeout";} \
 		"
 
 	if [ -x "$agh" ] && [ ! -s "$aghConfigFile" ]; then
@@ -594,7 +593,6 @@ load_environment() {
 	local param="$1" validation_result="$2"
 	case "$param" in
 		on_boot|on_start)
-			json init
 			output 1 "Loading environment ($param) "
 			load_package_config "$param"
 			if [ "$enabled" -eq '0' ]; then
@@ -622,7 +620,6 @@ load_environment() {
 			load_network "$param"
 		;;
 		on_interface_reload|on_reload|on_stop|*)
-			json init
 			output 1 "Loading environment ($param) "
 			load_package_config "$param"
 			load_network "$param"
@@ -2045,8 +2042,7 @@ on_interface_reload() {
 start_service() {
 	local resolverStoredHash resolverNewHash i param="$1" reloadedIface k
 
-#	[ -n "$pbrBootFlag" ] && return 0
-#	[ "$param" = 'on_boot' ] && return 0
+	json init
 	load_environment "${param:-on_start}" "$(load_validate_config)" || return 1
 	if [ -n "$pbrBootFlag" ] || [ "$param" = 'on_boot' ]; then 
 		[ -n "$wanGW" ] || return 0
@@ -2278,6 +2274,7 @@ service_triggers() {
 # shellcheck disable=SC2015
 stop_service() {
 	local i nft_file_mode
+	json init
 	! is_service_running && [ "$(get_rt_tables_next_id)" = "$(get_rt_tables_non_pbr_next_id)" ] && return 0
 	[ "$1" = 'quiet' ] && quiet_mode 'on'
 	load_environment 'on_stop'
@@ -2451,9 +2448,9 @@ load_validate_config() {
 		'resolver_set:or("", "none", "dnsmasq.nftset")' \
 		'resolver_instance:list(or(integer, string)):*' \
 		'verbosity:range(0,2):2' \
-		'uplink_mark:regex("[A-Fa-f0-9]{8}"):010000' \
+		'uplink_mark:regex("[A-Fa-f0-9]{8}"):00010000' \
 		'uplink_ip_rules_priority:uinteger:30000' \
-		'fw_mask:regex("[A-Fa-f0-9]{8}"):ff0000' \
+		'fw_mask:regex("[A-Fa-f0-9]{8}"):00ff0000' \
 		'icmp_interface:or("", tor, uci("network", "@interface"))' \
 		'ignored_interface:list(or(tor, uci("network", "@interface")))' \
 		'supported_interface:list(or(ignore, tor, regex("xray_.*"), uci("network", "@interface")))' \
