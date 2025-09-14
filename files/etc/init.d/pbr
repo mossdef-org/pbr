@@ -2062,19 +2062,19 @@ start_service() {
 		on_firewall_reload)
 			serviceStartTrigger='on_start'
 		;;
-		on_interface_reload)
-			reloadedIface="$2"
-			local tid pre_init_tid
-			tid="$(get_rt_tables_id "$reloadedIface")"
-			pre_init_tid="$(eval echo "\$pre_init_tid_${reloadedIface//-/_}")"
-			if [ "$tid" = "$pre_init_tid" ]; then
-				serviceStartTrigger='on_interface_reload'
-			else
-				serviceStartTrigger='on_start'
-				unset reloadedIface
-			fi
-		;;
-		on_reload)
+#		on_interface_reload)
+#			reloadedIface="$2"
+#			local tid pre_init_tid
+#			tid="$(get_rt_tables_id "$reloadedIface")"
+#			pre_init_tid="$(eval echo "\$pre_init_tid_${reloadedIface//-/_}")"
+#			if [ "$tid" = "$pre_init_tid" ]; then
+#				serviceStartTrigger='on_interface_reload'
+#			else
+#				serviceStartTrigger='on_start'
+#				unset reloadedIface
+#			fi
+#		;;
+		on_interface_reload|on_reload)
 			serviceStartTrigger='on_reload'
 		;;
 		on_restart)
