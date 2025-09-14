@@ -77,6 +77,7 @@ define Package/pbr/default/install
 	$(INSTALL_DATA) ./files/usr/share/pbr/.keep $(1)/usr/share/pbr/.keep
 	$(INSTALL_DATA) ./files/usr/share/pbr/pbr.user.aws $(1)/usr/share/pbr/pbr.user.aws
 	$(INSTALL_DATA) ./files/usr/share/pbr/pbr.user.netflix $(1)/usr/share/pbr/pbr.user.netflix
+	$(INSTALL_DATA) ./files/usr/share/pbr/pbr.user.dnsprefetch $(1)/usr/share/pbr/pbr.user.dnsprefetch
 	$(INSTALL_DIR) $(1)/usr/share/nftables.d
 	$(CP) ./files/usr/share/nftables.d/* $(1)/usr/share/nftables.d/
 	$(INSTALL_DIR) $(1)/etc/uci-defaults
