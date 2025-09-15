@@ -34,7 +34,7 @@ fi
 
 readonly packageName='pbr'
 readonly PKG_VERSION='dev-test'
-readonly packageCompat='15'
+readonly packageCompat='16'
 readonly serviceName="$packageName $PKG_VERSION"
 readonly packageConfigFile="/etc/config/${packageName}"
 readonly packageDebugFile="/var/run/${packageName}.debug"
@@ -1099,7 +1099,7 @@ dns_policy_routing() {
 	local param4 param6
 	local negation value dest4 dest6 first_value
 	local inline_set_ipv4_empty_flag inline_set_ipv6_empty_flag
-	local name="$1" src_addr="$2" dest_dns="$3" uid="$4"
+	local name="$1" src_addr="$2" dest_dns="$3" uid="$4" dest_dns_port="$5"
 	local chain='dstnat' iface='dns'
 
 	if [ -z "${dest_dns_ipv4}${dest_dns_ipv6}" ]; then
@@ -1117,7 +1117,7 @@ dns_policy_routing() {
 	if { is_ipv4 "$(str_first_word "$src_addr")" && [ -z "$dest_dns_ipv4" ]; } || \
 		{ is_ipv6 "$(str_first_word "$src_addr")" && [ -z "$dest_dns_ipv6" ]; }; then 
 		processPolicyError='true'
-		json add error 'errorPolicyProcessMismatchFamily' "${name}: '$src_addr' '$dest_dns'"
+		json add error 'errorPolicyProcessMismatchFamily' "${name}: '$src_addr' '$dest_dns':'$dest_dns_port'"
 		return 1
 	fi
 
@@ -1125,8 +1125,8 @@ dns_policy_routing() {
 		unset param4
 		unset param6
 
-		dest4="dport 53 dnat ip to ${dest_dns_ipv4}:53"
-		dest6="dport 53 dnat ip6 to ${dest_dns_ipv6}:53"
+		dest4="dport 53 dnat ip to ${dest_dns_ipv4}:${dest_dns_port}"
+		dest6="dport 53 dnat ip6 to ${dest_dns_ipv6}:${dest_dns_port}"
 
 		if [ -n "$src_addr" ]; then
 			if [ "${src_addr:0:1}" = "!" ]; then
@@ -1455,7 +1455,7 @@ dns_policy_process() {
 	fi
 
 	unset processDnsPolicyError
-	output 2 "Routing '$name' DNS to $dest_dns "
+	output 2 "Routing '$name' DNS to $dest_dns:$dest_dns_port "
 	if [ -z "$src_addr" ]; then
 		json add error 'errorPolicyNoSrcDest' "$name"
 		output_fail; return 1;
@@ -1477,7 +1477,7 @@ dns_policy_process() {
 			if str_contains "$filter_group_src_addr" 'ipv6' && [ -z "$dest_dns_ipv6" ] ; then
 					continue
 			fi
-			dns_policy_routing "$name" "$filtered_value_src_addr" "$dest_dns" "$uid"
+			dns_policy_routing "$name" "$filtered_value_src_addr" "$dest_dns" "$uid" "$dest_dns_port"
 		fi
 	done
 
@@ -2168,12 +2168,9 @@ start_service() {
 		;;
 	esac
 
-	if [ -z "$gatewaySummary" ]; then
-		json add error 'errorNoGateways'
-	fi
 	json_add_int 'packageCompat' "$packageCompat"
 	json_add_object 'status'
-	[ -n "$gatewaySummary" ] && json_add_string 'gateways' "$gatewaySummary"
+	[ -n "$gatewaySummary" ] && json_add_string 'gateways' "$gatewaySummary" || json add error 'errorNoGateways'
 	json_close_object
 	json_add_array 'errors'
 		for k in $(json get errors); do
@@ -2476,11 +2473,13 @@ load_validate_dns_policy() {
 	local enabled
 	local src_addr
 	local dest_dns
+	local dest_dns_port
 	uci_load_validate "$packageName" 'policy' "$1" "${2}${3:+ $3}" \
 		'name:string:Untitled' \
 		'enabled:bool:1' \
 		'src_addr:list(neg(or(host,network,macaddr,string)))' \
-		'dest_dns:list(or(host,network,string))'
+		'dest_dns:list(or(host,network,string))' \
+		'dest_dns_port:port:53'
 }
 
 # shellcheck disable=SC2120
