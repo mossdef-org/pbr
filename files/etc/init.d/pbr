@@ -446,7 +446,7 @@ process_url() {
 	else
 		unset dl_https_supported
 	fi
-	while [ -z "$dl_temp_file" ] || [ -e "$dl_temp_file" ]; do
+	while [ -z "$dl_temp_file" ]; do
 		dl_temp_file="$(mktemp -q -t "${packageName}_tmp.XXXXXXXX")"
 	done
 	if is_url_file "$url" && ! is_present 'curl'; then
