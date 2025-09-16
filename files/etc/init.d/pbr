@@ -34,7 +34,7 @@ fi
 
 readonly packageName='pbr'
 readonly PKG_VERSION='dev-test'
-readonly packageCompat='16'
+readonly packageCompat='17'
 readonly serviceName="$packageName $PKG_VERSION"
 readonly packageConfigFile="/etc/config/${packageName}"
 readonly packageDebugFile="/var/run/${packageName}.debug"
@@ -407,6 +407,7 @@ get_text() {
 		errorRequiredBinaryMissing) printf "Required binary '%s' is missing" "$1";;
 		errorInterfaceRoutingUnknownDevType) printf "Unknown IPv6 Link type for device '%s'" "$1";;
 		errorUplinkDown) printf "Uplink/WAN interface is still down, increase value of 'procd_boot_trigger_delay' option";;
+		errorMktempFileCreate) printf "Failed to create temporary file with mktemp mask: '%s'" "$1";;
 		errorSummary) printf "Errors encountered, please check %s" "$1";;
 		warningInvalidOVPNConfig) printf "Invalid OpenVPN config for '%s' interface" "$1";;
 		warningResolverNotSupported) printf "Resolver set (%s) is not supported on this system" "$resolver_set";;
@@ -446,9 +447,11 @@ process_url() {
 	else
 		unset dl_https_supported
 	fi
-	while [ -z "$dl_temp_file" ]; do
-		dl_temp_file="$(mktemp -q -t "${packageName}_tmp.XXXXXXXX")"
-	done
+	dl_temp_file="$(mktemp -q -t "${packageName}_tmp.XXXXXXXX")"
+	if [ -z "$dl_temp_file" ] || [ ! -e "$dl_temp_file"  ]; then
+		json add error 'errorMktempFileCreate' "${packageName}_tmp.XXXXXXXX"
+		return 1
+	fi
 	if is_url_file "$url" && ! is_present 'curl'; then
 		json add error 'errorFileSchemaRequiresCurl' "$url"
 	elif is_url_https "$url" && [ -z "$dl_https_supported" ]; then
