@@ -39,7 +39,7 @@ readonly serviceName="$packageName $PKG_VERSION"
 readonly packageConfigFile="/etc/config/${packageName}"
 readonly packageDebugFile="/var/run/${packageName}.debug"
 readonly packageLockFile="/var/run/${packageName}.lock"
-readonly dnsmasqFileDefault="/var/run/${packageName}.dnsmasq"
+readonly packageDnsmasqFile="/var/run/${packageName}.dnsmasq"
 readonly runningStatusFile="/dev/shm/${packageName}.status.json"
 readonly _OK_='\033[0;32m\xe2\x9c\x93\033[0m'
 readonly __OK__='\033[0;32m[\xe2\x9c\x93]\033[0m'
@@ -104,7 +104,6 @@ aghConfigFile='/etc/AdGuardHome/AdGuardHome.yaml'
 gatewaySummary=
 wanIface4=
 wanIface6=
-dnsmasqFileList="$dnsmasqFileDefault"
 ifaceMark=
 ifaceTableID=
 ifacePriority=
@@ -125,6 +124,8 @@ nftRuleParams=
 nftSetParams=
 torDnsPort=
 torTrafficPort=
+dnsmasq_features=
+dnsmasq_ubus=
 
 # shellcheck disable=SC1091
 . /lib/functions.sh
@@ -319,6 +320,26 @@ __ubus_get() { ubus call service list "{ 'name': '$packageName' }" | jsonfilter 
 ubus_get_status() { __ubus_get "@.${packageName}.instances.main.data.status.${1}"; }
 ubus_get_interface() { __ubus_get "@.${packageName}.instances.main.data.gateways[@.name='${1}']${2:+.$2}"; }
 ubus_get_gateways() { __ubus_get "@.${packageName}.instances.main.data.gateways"; }
+uci_add_list_if_new() {
+	local PACKAGE="$1"
+	local CONFIG="$2"
+	local OPTION="$3"
+	local VALUE="$4"
+	local i
+	[ -n "$PACKAGE" ] && [ -n "$CONFIG" ] && [ -n "$OPTION" ] && [ -n "$VALUE" ] || return 1
+	for i in $(uci_get "$PACKAGE" "$CONFIG" "$OPTION"); do
+		[ "$i" = "$VALUE" ] && return 0
+	done
+	uci_add_list "$PACKAGE" "$CONFIG" "$OPTION" "$VALUE"
+}
+uci_changes() {
+	local PACKAGE="$1"
+	local CONFIG="$2"
+	local OPTION="$3"
+	if [ -s "${UCI_CONFIG_DIR:-/etc/config/}${PACKAGE}" ]; then
+		/sbin/uci ${UCI_CONFIG_DIR:+-c $UCI_CONFIG_DIR} changes "$PACKAGE${CONFIG:+.$CONFIG}${OPTION:+.$OPTION}"
+	fi
+}
 uci_get_listen_port() {
 	local __tmp
 	__tmp="$(uci_get 'network' "$2" 'listen_port')"
@@ -335,17 +356,8 @@ check_agh() { [ -x "$agh" ] && { [ -s "$aghConfigFile" ] || [ -s "${agh%/*}/AdGu
 check_dnsmasq() { command -v dnsmasq >/dev/null 2>&1; }
 check_unbound() { command -v unbound >/dev/null 2>&1; }
 check_dnsmasq_nftset() {
-	local o;
-	check_nft || return 1
-	check_dnsmasq || return 1
-	o="$(dnsmasq -v 2>/dev/null)"
-	[ -n "$debug_dnsmasq" ] && { 
-		echo " $(date) dnsmasq output dump:";
-# shellcheck disable=SC3003
-		echo  "${o%$'\n'$'\n'This*}"; 
-		echo '-------------------------'; 
-	} >> "$packageDebugFile"
-	! echo "$o" | grep -q 'no-nftset' && echo "$o" | grep -q 'nftset'
+	[ -z "$dnsmasq_features" ] && dnsmasq_features="$(dnsmasq --version | grep -m1 'Compile time options:' | cut -d: -f2) "
+	[ "${dnsmasq_features#* nftset }" != "$dnsmasq_features" ]
 }
 print_json_bool() { json_init; json_add_boolean "$1" "$2"; json_dump; json_cleanup; }
 print_json_string() { json_init; json_add_string "$1" "$2"; json_dump; json_cleanup; }
@@ -614,7 +626,7 @@ load_environment() {
 				return 1
 			fi
 			_system_health_check || { output 1 "$_FAIL_\n"; return 1; }
-			resolver 'check_support' && resolver 'configure_instances'
+			resolver 'check_support'
 			load_network "$param"
 			output 1 "$_OK_\n"
 		;;
@@ -767,7 +779,7 @@ nftset() {
 		add_dnsmasq_element)
 			[ -n "$ipv6_enabled" ] || unset nftset6
 			# shellcheck disable=SC2086
-			echo "nftset=/${param}/4#inet#${nftTable}#${nftset4}${nftset6:+,6#inet#${nftTable}#$nftset6} # $comment" | tee -a $dnsmasqFileList >/dev/null 2>&1 && ipv4_error=0
+			echo "nftset=/${param}/4#inet#${nftTable}#${nftset4}${nftset6:+,6#inet#${nftTable}#$nftset6} # $comment" >> "$packageDnsmasqFile" && ipv4_error=0
 		;;
 		create)
 			case "$type" in
@@ -886,9 +898,9 @@ json() {
 	local status message stats i
 	local action="$1" param="$2" value="$3"; shift 3; local info="$*";
 	local _current_namespace="$_JSON_PREFIX"
+	json_set_namespace "${packageName//-/_}_"
 	[ "$param" = 'error' ] && param='errors'
 	[ "$param" = 'warning' ] && param='warnings'
-	json_set_namespace "${packageName}_"
 	{ json_load_file "$runningStatusFile" || json_init; } >/dev/null 2>&1
 	case "$action" in
 		'get')
@@ -931,31 +943,36 @@ json() {
 }
 
 resolver() {
-	_resolver_dnsmasq_confdir() {
-		local cfg="$1"
-		local confdir confdirFile
-# shellcheck disable=SC2016
-		if grep -q 'config_get dnsmasqconfdir "$cfg" confdir "/tmp/dnsmasq${cfg:+.$cfg}.d"' '/etc/init.d/dnsmasq'; then
-			config_get confdir "$cfg" 'confdir' "/tmp/dnsmasq${cfg:+.$cfg}.d"
-		else
-			config_get confdir "$cfg" 'confdir' '/tmp/dnsmasq.d'
-		fi
-		confdirFile="${confdir}/${packageName}"
-		if ! str_contains "$dnsmasqFileList" "$confdirFile"; then
-			dnsmasqFileList="${dnsmasqFileList:+$dnsmasqFileList }${confdirFile}"
-		fi
+	_dnsmasq_instance_get_confdir() {
+		local confdir
+		[ -z "$dnsmasq_ubus" ] && dnsmasq_ubus="$(ubus call service list '{"name":"dnsmasq"}')"
+		config_get confdir "$cfg" 'confdir' "$(echo "$dnsmasq_ubus" | jsonfilter -e "@.dnsmasq.instances.${1}.mount" | sed 's#\\/#/#g' | grep -oEm1 '/tmp/dnsmasq(\.[^"]*)?\.d')"
+		echo "$confdir"
+	}
+	_dnsmasq_instance_config() {
+		local cfg="$1" param="$2" confdir
+		case "$param" in
+			cleanup)
+				# clean up all dnsmasq configs
+				confdir="$(_dnsmasq_instance_get_confdir "$cfg")"
+				[ -n "$confdir" ] && rm -f "${confdir}/${packageName}"
+				uci_remove_list 'dhcp' "$cfg" 'addnmount' "$packageDnsmasqFile"
+			;;
+			setup)
+				# add dnsmasq conf addnmounts to point to pbr file
+				uci_add_list_if_new 'dhcp' "$cfg" 'addnmount' "$packageDnsmasqFile"
+				# add softlink to pbr file
+				confdir="$(_dnsmasq_instance_get_confdir "$cfg")"
+				[ -n "$confdir" ] || return 1
+				ln -sf "$packageDnsmasqFile" "${confdir}/${packageName}"
+				chmod 660 "${confdir}/${packageName}"
+				chown -h root:dnsmasq "${confdir}/${packageName}" >/dev/null 2>/dev/null
+			;;
+		esac
 	}
 	local agh_version
 	local param="$1" iface="$2" target="$3" type="$4" uid="$5" name="$6" value="$7"
 	shift
-
-	if [ "$param" = 'cleanup_all' ]; then
-		local dfl
-		for dfl in $dnsmasqFileList; do
-			rm -f "$dfl"
-		done
-		return 0
-	fi
 
 	case "$resolver_set" in
 		''|none)
@@ -965,8 +982,6 @@ resolver() {
 				check_support) return 0;;
 				cleanup) return 0;;
 				configure) return 0;;
-				init) return 0;;
-				init_end) return 0;;
 				kill) return 0;;
 				reload) return 0;;
 				restart) return 0;;
@@ -997,50 +1012,23 @@ resolver() {
 					fi
 				;;
 				cleanup)
-					if [ -n "$resolverSetSupported" ]; then
-						local dfl
-						for dfl in $dnsmasqFileList; do
-							rm -f "$dfl"
-						done
-					fi
+					[ -n "$resolverSetSupported" ] || return 1
+					config_load 'dhcp'
+					config_foreach _dnsmasq_instance_config 'dnsmasq' 'cleanup'
 				;;
 				configure)
-					if [ -n "$resolverSetSupported" ]; then
-						local dfl
-						for dfl in $dnsmasqFileList; do
-							[ "$dfl" = "$dnsmasqFileDefault" ] && continue
-							mkdir -p "${dfl%/*}"
-							chmod -R 660 "${dfl%/*}"
-							chown -R root:dnsmasq "${dfl%/*}"
-							touch "$dfl"
-							chmod 660 "$dfl"
-							chown root:dnsmasq "$dfl"
-						done
-					fi
-				;;
-				configure_instances)
+					[ -n "$resolverSetSupported" ] || return 1
 					config_load 'dhcp'
 					if [ "$resolver_instance" = "*" ]; then
-						config_foreach _resolver_dnsmasq_confdir 'dnsmasq'
+						config_foreach _dnsmasq_instance_config 'dnsmasq' 'setup'
 					else
+						config_foreach _dnsmasq_instance_config 'dnsmasq' 'cleanup'
 						for i in $resolver_instance; do
-							_resolver_dnsmasq_confdir "@dnsmasq[$i]" \
-							|| _resolver_dnsmasq_confdir "$i"
+							_dnsmasq_instance_config "@dnsmasq[$i]" \
+							|| _dnsmasq_instance_config "$i"
 						done
 					fi
-					local dfl
-					for dfl in $dnsmasqFileList; do
-						[ "$dfl" = "$dnsmasqFileDefault" ] && continue
-						mkdir -p "${dfl%/*}"
-						chmod -R 660 "${dfl%/*}"
-						chown -R root:dnsmasq "${dfl%/*}"
-						touch "$dfl"
-						chmod 660 "$dfl"
-						chown root:dnsmasq "$dfl"
-					done
 				;;
-				init) :;;
-				init_end) :;;
 				kill)
 					[ -n "$resolverSetSupported" ] && killall -q -s HUP dnsmasq;;
 				reload)
@@ -1068,13 +1056,13 @@ resolver() {
 				compare_hash)
 					[ -z "$resolverSetSupported" ] && return 1
 					local resolverNewHash
-					if [ -s "$dnsmasqFileDefault" ]; then
-						resolverNewHash="$(md5sum "$dnsmasqFileDefault" | awk '{ print $1; }')"
+					if [ -s "$packageDnsmasqFile" ]; then
+						resolverNewHash="$(md5sum "$packageDnsmasqFile" | awk '{ print $1; }')"
 					fi
 					[ "$resolverNewHash" != "$resolverStoredHash" ]
 				;;
 				store_hash)
-					[ -s "$dnsmasqFileDefault" ] && resolverStoredHash="$(md5sum "$dnsmasqFileDefault" | awk '{ print $1; }')";;
+					[ -s "$packageDnsmasqFile" ] && resolverStoredHash="$(md5sum "$packageDnsmasqFile" | awk '{ print $1; }')";;
 			esac
 		;;
 		unbound.nftset)
@@ -1084,8 +1072,6 @@ resolver() {
 				check_support) :;;
 				cleanup) :;;
 				configure) :;;
-				init) :;;
-				init_end) :;;
 				kill) :;;
 				reload) :;;
 				restart) :;;
@@ -2120,9 +2106,7 @@ start_service() {
 		;;
 		on_reload|on_start|*)
 			resolver 'store_hash'
-			resolver 'cleanup_all'
 			resolver 'configure'
-			resolver 'init'
 			cleanup_main_chains
 			cleanup_sets
 			cleanup_marking_chains
@@ -2166,7 +2150,6 @@ start_service() {
 				output 1 '\n'
 			fi
 			nft_file 'install'
-			resolver 'init_end'
 			resolver 'compare_hash' && resolver 'restart'
 		;;
 	esac
@@ -2216,7 +2199,7 @@ service_started() {
 			info="$(json get warning "$c" 'info')"
 			output_warning "$(get_text "$code" "$info")"
 		done
-		output_warning "$(get_text 'warningSummary' "$(get_url '#ErrorMessagesDetails')")"
+		output_warning "$(get_text 'warningSummary' "$(get_url '#WarningMessagesDetails')")"
 	fi
 	error="$(json get error)"
 	if [ -n "$error" ]; then
@@ -2225,7 +2208,7 @@ service_started() {
 			info="$(json get error "$c" 'info')"
 			output_error "$(get_text "$code" "$info")"
 		done
-		output_error "$(get_text 'errorSummary' "$(get_url '#WarningMessagesDetails')")"
+		output_error "$(get_text 'errorSummary' "$(get_url '#ErrorMessagesDetails')")"
 	fi
 	touch "$packageLockFile"
 	if [ -n "$error" ]; then
@@ -2297,7 +2280,7 @@ stop_service() {
 	unset ifaceMark
 	unset ifaceTableID
 	resolver 'store_hash'
-	resolver 'cleanup_all'
+	resolver 'cleanup'
 	resolver 'compare_hash' && resolver 'restart'
 	if [ "$enabled" -ne '0' ]; then
 		if [ -n "$nft_file_mode" ]; then
@@ -2408,10 +2391,10 @@ status_service() {
 	for i in $(get_nft_sets); do
 		"$nft" -a list table inet "$nftTable" | sed -n "/set ${i} {/,/\t}/p"
 	done
-	if [ -s "$dnsmasqFileDefault" ]; then
+	if [ -s "$packageDnsmasqFile" ]; then
 		echo "$_SEPARATOR_"
-		echo "dnsmasq nft sets in $dnsmasqFileDefault"
-		cat "$dnsmasqFileDefault"
+		echo "dnsmasq nft sets in $packageDnsmasqFile"
+		cat "$packageDnsmasqFile"
 	fi
 #	echo "$_SEPARATOR_"
 #	ip rule list | grep "${packageName}_"
