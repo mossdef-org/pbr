@@ -638,6 +638,7 @@ load_environment() {
 			output 1 "Loading environment ($param) "
 			load_package_config "$param"
 			load_network "$param"
+			resolver 'check_support'
 			output 1 "$_OK_\n"
 		;;
 	esac
@@ -957,6 +958,7 @@ resolver() {
 				confdir="$(_dnsmasq_instance_get_confdir "$cfg")"
 				[ -n "$confdir" ] && rm -f "${confdir}/${packageName}"
 				uci_remove_list 'dhcp' "$cfg" 'addnmount' "$packageDnsmasqFile"
+				rm -f "$packageDnsmasqFile"
 			;;
 			setup)
 				# add dnsmasq conf addnmounts to point to pbr file
@@ -964,6 +966,7 @@ resolver() {
 				# add softlink to pbr file
 				confdir="$(_dnsmasq_instance_get_confdir "$cfg")"
 				[ -n "$confdir" ] || return 1
+				touch "$packageDnsmasqFile"
 				ln -sf "$packageDnsmasqFile" "${confdir}/${packageName}"
 				chmod 660 "${confdir}/${packageName}"
 				chown -h root:dnsmasq "${confdir}/${packageName}" >/dev/null 2>/dev/null
