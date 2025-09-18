@@ -60,8 +60,8 @@
 		echo "$event" | grep -q "dnsmasq.dns" || continue
 		dnsmasq_restarted='1'
 		# shellcheck disable=SC2154
-		[ -f "$dnsmasqFileDefault" ] || {
-			output "File $dnsmasqFileDefault not found, $log_abort $__FAIL__"
+		[ -f "$packageDnsmasqFile" ] || {
+			output "File $packageDnsmasqFile not found, $log_abort $__FAIL__"
 			break
 		}
 		nft_ready || break
@@ -72,7 +72,7 @@
 			while IFS='/' read -r _ domain _; do
 				[ -n "$domain" ] && run_nslookup "$domain" &
 				entries=$((entries + 1))
-			done < "$dnsmasqFileDefault"
+			done < "$packageDnsmasqFile"
 			wait
 		)
 
