@@ -1959,6 +1959,7 @@ process_interface() {
 					output_fail
 				fi
 			else
+				json_add_gateway 'skip_interface' "$ifaceTableID" "$ifaceMark" "$iface" "$gw4" "$dev" "$gw6" "$dev6" "$ifacePriority" "$dispStatus"
 				gatewaySummary="${gatewaySummary}${displayText}${dispStatus:+ $dispStatus}\n"
 			fi
 		;;
