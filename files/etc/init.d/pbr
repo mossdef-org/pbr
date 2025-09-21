@@ -336,9 +336,8 @@ uci_changes() {
 	local PACKAGE="$1"
 	local CONFIG="$2"
 	local OPTION="$3"
-	if [ -s "${UCI_CONFIG_DIR:-/etc/config/}${PACKAGE}" ]; then
-		/sbin/uci ${UCI_CONFIG_DIR:+-c $UCI_CONFIG_DIR} changes "$PACKAGE${CONFIG:+.$CONFIG}${OPTION:+.$OPTION}"
-	fi
+	[ -s "${UCI_CONFIG_DIR:-/etc/config/}${PACKAGE}" ] && \
+	[ -n "$(/sbin/uci ${UCI_CONFIG_DIR:+-c $UCI_CONFIG_DIR} changes "$PACKAGE${CONFIG:+.$CONFIG}${OPTION:+.$OPTION}")" ]
 }
 uci_get_listen_port() {
 	local __tmp
@@ -579,7 +578,7 @@ load_environment() {
 		fi
 		if [ "$(uci_get 'firewall' 'defaults' 'auto_includes')" = '0' ]; then
 			uci_remove 'firewall' 'defaults' 'auto_includes'
-			uci_commit firewall
+			uci_commit 'firewall'
 		fi
 		if [ "$(readlink /sbin/ip)" != "$ip_full" ]; then
 			json add error 'errorRequiredBinaryMissing' 'ip-full'
@@ -1058,6 +1057,7 @@ resolver() {
 				;;
 				compare_hash)
 					[ -z "$resolverSetSupported" ] && return 1
+					uci_changes 'dhcp' && uci_commit 'dhcp' 
 					local resolverNewHash
 					if [ -s "$packageDnsmasqFile" ]; then
 						resolverNewHash="$(md5sum "$packageDnsmasqFile" | awk '{ print $1; }')"
