@@ -6,7 +6,7 @@
 # sysctl net.ipv4.conf.all.rp_filter=1
 
 # shellcheck disable=SC2034
-START=50
+START=20
 # shellcheck disable=SC2034
 USE_PROCD=1
 
@@ -126,6 +126,8 @@ torDnsPort=
 torTrafficPort=
 dnsmasq_features=
 dnsmasq_ubus=
+loadEnvironmentFlag=
+loadPackageConfigFlag=
 
 # shellcheck disable=SC1091
 . /lib/functions.sh
@@ -477,42 +479,41 @@ process_url() {
 
 load_package_config() {
 	local param="$1"
-	local user_file_check_result i
 	config_load "$packageName"
-	config_get_bool debug_dnsmasq             'config' 'debug_dnsmasq' '0'
-	config_get_bool enabled                   'config' 'enabled' '0'
-	config_get      fw_mask                   'config' 'fw_mask' '00ff0000'
+	config_get_bool enabled                   'config' 'enabled'                  '0'
+	config_get      fw_mask                   'config' 'fw_mask'                  '00ff0000'
 	config_get      icmp_interface            'config' 'icmp_interface'
 	config_get      ignored_interface         'config' 'ignored_interface'
-	config_get_bool ipv6_enabled              'config' 'ipv6_enabled' '0'
-	config_get_bool nft_rule_counter          'config' 'nft_rule_counter' '0'
-	config_get_bool nft_set_auto_merge        'config' 'nft_set_auto_merge' '1'
-	config_get_bool nft_set_counter           'config' 'nft_set_counter' '0'
-	config_get_bool nft_set_flags_interval    'config' 'nft_set_flags_interval' '1'
-	config_get_bool nft_set_flags_timeout     'config' 'nft_set_flags_timeout' '0'
+	config_get_bool ipv6_enabled              'config' 'ipv6_enabled'             '0'
+	config_get_bool nft_rule_counter          'config' 'nft_rule_counter'         '0'
+	config_get_bool nft_set_auto_merge        'config' 'nft_set_auto_merge'       '1'
+	config_get_bool nft_set_counter           'config' 'nft_set_counter'          '0'
+	config_get_bool nft_set_flags_interval    'config' 'nft_set_flags_interval'   '1'
+	config_get_bool nft_set_flags_timeout     'config' 'nft_set_flags_timeout'    '0'
+	config_get_bool nft_user_set_counter      'config' 'nft_user_set_counter'     '0'
 	config_get      nft_set_gc_interval       'config' 'nft_set_gc_interval'
-	config_get      nft_set_policy            'config' 'nft_set_policy' 'performance'
+	config_get      nft_set_policy            'config' 'nft_set_policy'          'performance'
 	config_get      nft_set_timeout           'config' 'nft_set_timeout'
 	config_get      resolver_set              'config' 'resolver_set'
-	config_get      resolver_instance         'config' 'resolver_instance' '*'
-	config_get_bool strict_enforcement        'config' 'strict_enforcement' '1'
+	config_get      resolver_instance         'config' 'resolver_instance'        '*'
+	config_get_bool strict_enforcement        'config' 'strict_enforcement'       '1'
 	config_get      supported_interface       'config' 'supported_interface'
-	config_get      verbosity                 'config' 'verbosity' '2'
+	config_get      verbosity                 'config' 'verbosity'                '2'
 	config_get      procd_boot_trigger_delay  'config' 'procd_boot_trigger_delay' '5000'
-	config_get      lan_device                'config' 'lan_device'  'br-lan'
-	config_get      procd_reload_delay        'config' 'procd_reload_delay' '0'
-	config_get      uplink_interface          'config' 'uplink_interface'  'wan'
-	config_get      uplink_interface6         'config' 'uplink_interface6' 'wan6'
+	config_get      lan_device                'config' 'lan_device'               'br-lan'
+	config_get      procd_reload_delay        'config' 'procd_reload_delay'       '0'
+	config_get      uplink_interface          'config' 'uplink_interface'         'wan'
+	config_get      uplink_interface6         'config' 'uplink_interface6'        'wan6'
 	config_get      uplink_ip_rules_priority  'config' 'uplink_ip_rules_priority' '30000'
-	config_get      uplink_mark               'config' 'uplink_mark' '00010000'
+	config_get      uplink_mark               'config' 'uplink_mark'              '00010000'
 
 	fw_mask="0x${fw_mask}"
 	uplink_mark="0x${uplink_mark}"
 
-	[ "$resolver_set" = 'none' ] && unset resolver_set
-	[ "$debug_dnsmasq" = '1' ] || unset debug_dnsmasq
-	[ "$ipv6_enabled" = '1' ] || unset ipv6_enabled
-	[ "$nft_user_set_counter" = '1' ] || unset nft_user_set_counter
+	[ "$resolver_set" = 'none' ]      && unset resolver_set
+	[ "$enabled" = '1' ]              || unset enabled
+	[ "$ipv6_enabled" = '1' ]         || unset ipv6_enabled
+	[ "$strict_enforcement" = '1' ]   || unset strict_enforcement
 
 	fw_maskXor="$(printf '%#x' "$((fw_mask ^ 0xffffffff))")"
 	fw_maskXor="${fw_maskXor:-0xff00ffff}"
@@ -528,12 +529,13 @@ load_package_config() {
 		0:0) nft_set_flags='';;
 	esac
 
-	[ "$nft_rule_counter" != '1' ]       && unset nft_rule_counter
-	[ "$nft_set_auto_merge" != '1' ]     && unset nft_set_auto_merge
-	[ "$nft_set_counter" != '1' ]        && unset nft_set_counter
-	[ "$nft_set_flags_interval" != '1' ] && unset nft_set_flags_interval
-	[ "$nft_set_flags_timeout" != '1' ]  && unset nft_set_flags_timeout
-	[ -z "${nft_set_flags_timeout}${nft_set_timeout}" ] && unset nft_set_gc_interval
+	[ "$nft_user_set_counter" = '1' ]    || unset nft_user_set_counter
+	[ "$nft_rule_counter" = '1' ]        || unset nft_rule_counter
+	[ "$nft_set_auto_merge" = '1' ]      || unset nft_set_auto_merge
+	[ "$nft_set_counter" = '1' ]         || unset nft_set_counter
+	[ "$nft_set_flags_interval" = '1' ]  || unset nft_set_flags_interval
+	[ "$nft_set_flags_timeout" = '1' ]   || unset nft_set_flags_timeout
+	[ -n "${nft_set_flags_timeout}${nft_set_timeout}" ] || unset nft_set_gc_interval
 
 	nftRuleParams="${nft_rule_counter:+counter}"
 
@@ -549,6 +551,8 @@ load_package_config() {
 	if [ -x "$agh" ] && [ ! -s "$aghConfigFile" ]; then
 		[ -s "${agh%/*}/AdGuardHome.yaml" ] && aghConfigFile="${agh%/*}/AdGuardHome.yaml"
 	fi
+	unset loadEnvironmentFlag
+	loadPackageConfigFlag='true'
 }
 
 # shellcheck disable=SC2317
@@ -605,11 +609,12 @@ load_environment() {
 		return "$_ret"
 	}
 	local param="$1" validation_result="$2"
+	[ -z "$loadEnvironmentFlag" ] || return 0
+	[ -n "$loadPackageConfigFlag" ] || load_package_config "$param"
 	case "$param" in
 		on_boot|on_start)
 			output 1 "Loading environment ($param) "
-			load_package_config "$param"
-			if [ "$enabled" -eq '0' ]; then
+			if [ -z "$enabled" ]; then
 				output 1 "$_FAIL_\n"
 				json add error 'errorServiceDisabled'
 				output_error "$(get_text 'errorServiceDisabled')"
@@ -630,17 +635,16 @@ load_environment() {
 			output 1 "$_OK_\n"
 		;;
 		on_triggers)
-			load_package_config "$param"
 			load_network "$param"
 		;;
 		on_interface_reload|on_reload|on_stop|*)
 			output 1 "Loading environment ($param) "
-			load_package_config "$param"
 			load_network "$param"
 			resolver 'check_support'
 			output 1 "$_OK_\n"
 		;;
 	esac
+	loadEnvironmentFlag='true'
 }
 
 # shellcheck disable=SC2317
@@ -1424,7 +1428,7 @@ policy_routing() {
 dns_policy_process() {
 	local i j uid="$1"
 
-	[ "$enabled" -gt '0' ] || return 0
+	[ "$enabled" = '1' ] || return 0
 
 	src_addr="$(str_extras_to_space "$src_addr")"
 	dest_dns="$(str_extras_to_space "$dest_dns")"
@@ -1483,7 +1487,7 @@ dns_policy_process() {
 policy_process() {
 	local i j uid="$1"
 
-	[ "$enabled" -gt '0' ] || return 0
+	[ "$enabled" = '1' ] || return 0
 
 	src_addr="$(str_extras_to_space "$src_addr")"
 	src_port="$(str_extras_to_space "$src_port")"
@@ -1604,7 +1608,7 @@ interface_routing() {
 				fi
 				ip -4 rule flush table "$tid" >/dev/null 2>&1
 				ip -4 route flush table "$tid" >/dev/null 2>&1
-				if [ -n "$gw4" ] || [ "$strict_enforcement" -ne '0' ]; then
+				if [ -n "$gw4" ] || [ -n "$strict_enforcement" ]; then
 					ipv4_error=0
 					if [ -z "$gw4" ]; then
 						try ip -4 route add unreachable default table "$tid" || ipv4_error=1
@@ -1632,7 +1636,7 @@ EOF
 					ipv6_error=0
 					ip -6 rule flush table "$tid" >/dev/null 2>&1
 					ip -6 route flush table "$tid" >/dev/null 2>&1
-					if { [ -n "$gw6" ] && [ "$gw6" != "::/0" ]; } || [ "$strict_enforcement" -ne '0' ]; then
+					if { [ -n "$gw6" ] && [ "$gw6" != "::/0" ]; } || [ -n "$strict_enforcement" ]; then
 						if [ -z "$gw6" ] || [ "$gw6" = "::/0" ]; then
 							try ip -6 route add unreachable default table "$tid" || ipv6_error=1
 						elif ip -6 route list table main | grep -q " dev $dev6 "; then
@@ -1711,7 +1715,7 @@ EOF
 				ip -6 rule flush table "$tid" >/dev/null 2>&1
 				ip -6 route flush table "$tid" >/dev/null 2>&1
 			fi
-			if [ -n "$gw4" ] || [ "$strict_enforcement" -ne '0' ]; then
+			if [ -n "$gw4" ] || [ -n "$strict_enforcement" ]; then
 				if [ -z "$gw4" ]; then
 					try ip -4 route add unreachable default table "$tid" || ipv4_error=1
 				else
@@ -1721,7 +1725,7 @@ EOF
 			fi
 			if [ -n "$ipv6_enabled" ]; then
 				ipv6_error=0
-				if { [ -n "$gw6" ] && [ "$gw6" != "::/0" ]; } || [ "$strict_enforcement" -ne '0' ]; then
+				if { [ -n "$gw6" ] && [ "$gw6" != "::/0" ]; } || [ -n "$strict_enforcement" ]; then
 					if [ -z "$gw6" ] || [ "$gw6" = "::/0" ]; then
 						try ip -6 route add unreachable default table "$tid" || ipv6_error=1
 					elif ip -6 route list table main | grep -q " dev $dev6 "; then
@@ -1971,7 +1975,7 @@ process_interface() {
 
 user_file_process() {
 	local shellBin="${SHELL:-/bin/ash}"
-	[ "$enabled" -gt '0' ] || return 0
+	[ "$enabled" = '1' ] || return 0
 	if [ ! -s "$path" ]; then
 		json add error 'errorUserFileNotFound' "$path"
 		output_fail
@@ -2004,8 +2008,6 @@ user_file_process() {
 
 boot() {
 	nft_file 'delete'
-#	ubus -t 30 wait_for network.interface 2>/dev/null
-	pbrBootFlag=1
 	rc_procd start_service 'on_boot' && service_started 'on_boot'
 }
 
@@ -2032,14 +2034,14 @@ on_interface_reload() {
 }
 
 start_service() {
-	local resolverStoredHash resolverNewHash i param="$1" reloadedIface k
+	local param="$1"
+	local resolverStoredHash resolverNewHash reloadedIface
+	local i k
 
+	load_package_config "$param"
+	[ "$param" = 'on_boot' ] && pbrBootFlag=1 && return 0
 	json init
 	load_environment "${param:-on_start}" "$(load_validate_config)" || return 1
-	if [ -n "$pbrBootFlag" ] || [ "$param" = 'on_boot' ]; then 
-		[ -n "$wanGW" ] || return 0
-		unset pbrBootFlag
-	fi
 
 	output "Processing environment (${param:-on_start}) "
 	is_wan_up "$param" || { output_error "$(get_text 'errorUplinkDown')";  return 1; }
@@ -2177,7 +2179,7 @@ start_service() {
 			json_close_object
 		done
 	json_close_array
-	if [ "$strict_enforcement" -ne '0' ] && str_contains "$gatewaySummary" '0.0.0.0'; then
+	if [ -n "$strict_enforcement" ] && str_contains "$gatewaySummary" '0.0.0.0'; then
 		json_add_string 'mode' 'strict'
 	fi
 	procd_close_data
@@ -2227,20 +2229,16 @@ service_stopped() { procd_set_config_changed firewall; }
 # shellcheck disable=SC2015
 service_triggers() {
 	local n
-	load_environment 'on_triggers'
-# shellcheck disable=SC2034
-	PROCD_RELOAD_DELAY=$(( procd_reload_delay * 1000 ))
-	procd_open_validate
-		load_validate_config
-		load_validate_policy
-		load_validate_include
-	procd_close_validate
-	if [ -n "$pbrBootFlag" ] && is_integer "$procd_boot_trigger_delay"; then
+	if [ -n "$pbrBootFlag" ]; then
 		output "Setting trigger (on_boot) "
-		procd_open_trigger
-			procd_add_raw_trigger "interface.*.up" "$procd_boot_trigger_delay" "/etc/init.d/${packageName}" start && output_okn || output_failn
-		procd_close_trigger
+		procd_add_raw_trigger "interface.*.up" "$procd_boot_trigger_delay" "/etc/init.d/${packageName}" start && output_okn || output_failn
 	else
+		PROCD_RELOAD_DELAY=$(( procd_reload_delay * 1000 ))
+		procd_open_validate
+			load_validate_config
+			load_validate_policy
+			load_validate_include
+		procd_close_validate
 		procd_open_trigger
 			procd_add_config_trigger "config.change" 'openvpn' "/etc/init.d/${packageName}" reload 'on_openvpn_change'
 			procd_add_config_trigger "config.change" "${packageName}" "/etc/init.d/${packageName}" reload
@@ -2251,9 +2249,9 @@ service_triggers() {
 			done
 			output 1 '\n'
 		procd_close_trigger
-	fi
-	if [ "$serviceStartTrigger" = 'on_start' ]; then
-		output 3 "$serviceName monitoring interfaces: ${ifacesSupported}\n"
+		if [ "$serviceStartTrigger" = 'on_start' ]; then
+			output 3 "$serviceName monitoring interfaces: ${ifacesSupported}\n"
+		fi
 	fi
 }
 
@@ -2285,7 +2283,7 @@ stop_service() {
 	resolver 'store_hash'
 	resolver 'cleanup'
 	resolver 'compare_hash' && resolver 'restart'
-	if [ "$enabled" -ne '0' ]; then
+	if [ -n "$enabled" ]; then
 		if [ -n "$nft_file_mode" ]; then
 			output "$serviceName (fw4 nft file mode) stopped "; output_okn;
 		else
@@ -2427,7 +2425,6 @@ status_service() {
 # shellcheck disable=SC2120
 load_validate_config() {
 	uci_load_validate "$packageName" "$packageName" "$1" "${2}${3:+ $3}" \
-		'debug_dnsmasq:bool:0' \
 		'enabled:bool:0' \
 		'strict_enforcement:bool:1' \
 		'ipv6_enabled:bool:0' \
@@ -2453,7 +2450,8 @@ load_validate_config() {
 		'nft_set_flags_timeout:bool:0'\
 		'nft_set_gc_interval:or("", string)'\
 		'nft_set_policy:or("", memory, performance):performance'\
-		'nft_set_timeout:or("", string)'
+		'nft_set_timeout:or("", string)' \
+	;
 }
 
 # shellcheck disable=SC2120
@@ -2468,7 +2466,8 @@ load_validate_dns_policy() {
 		'enabled:bool:1' \
 		'src_addr:list(neg(or(host,network,macaddr,string)))' \
 		'dest_dns:list(or(host,network,string))' \
-		'dest_dns_port:port:53'
+		'dest_dns_port:port:53' \
+	;
 }
 
 # shellcheck disable=SC2120
@@ -2491,7 +2490,8 @@ load_validate_policy() {
 		'src_addr:list(neg(or(host,network,macaddr,string)))' \
 		'src_port:list(neg(or(portrange,string)))' \
 		'dest_addr:list(neg(or(host,network,string)))' \
-		'dest_port:list(neg(or(portrange,string)))'
+		'dest_port:list(neg(or(portrange,string)))' \
+	;
 }
 
 # shellcheck disable=SC2120
@@ -2500,5 +2500,6 @@ load_validate_include() {
 	local enabled=
 	uci_load_validate "$packageName" 'include' "$1" "${2}${3:+ $3}" \
 		'path:file' \
-		'enabled:bool:0'
+		'enabled:bool:0' \
+	;
 }
