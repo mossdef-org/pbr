@@ -69,7 +69,6 @@ readonly xrayIfacePrefix='xray_'
 readonly rtTablesFile='/etc/iproute2/rt_tables'
 
 # package config options
-debug_dnsmasq=
 enabled=
 fw_mask=
 icmp_interface=
