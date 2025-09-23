@@ -781,7 +781,7 @@ nftset() {
 		;;
 		add_dnsmasq_element)
 			[ -n "$ipv6_enabled" ] || unset nftset6
-			# shellcheck disable=SC2086
+			grep -qxF "nftset=/${param}/4#inet#${nftTable}#${nftset4}${nftset6:+,6#inet#${nftTable}#$nftset6} # $comment" "$packageDnsmasqFile" && return 0
 			echo "nftset=/${param}/4#inet#${nftTable}#${nftset4}${nftset6:+,6#inet#${nftTable}#$nftset6} # $comment" >> "$packageDnsmasqFile" && ipv4_error=0
 		;;
 		create)
@@ -960,7 +960,6 @@ resolver() {
 				confdir="$(_dnsmasq_instance_get_confdir "$cfg")"
 				[ -n "$confdir" ] && rm -f "${confdir}/${packageName}"
 				uci_remove_list 'dhcp' "$cfg" 'addnmount' "$packageDnsmasqFile"
-				rm -f "$packageDnsmasqFile"
 			;;
 			setup)
 				# add dnsmasq conf addnmounts to point to pbr file
@@ -968,7 +967,6 @@ resolver() {
 				# add softlink to pbr file
 				confdir="$(_dnsmasq_instance_get_confdir "$cfg")"
 				[ -n "$confdir" ] || return 1
-				touch "$packageDnsmasqFile"
 				ln -sf "$packageDnsmasqFile" "${confdir}/${packageName}"
 				chmod 660 "${confdir}/${packageName}"
 				chown -h root:dnsmasq "${confdir}/${packageName}" >/dev/null 2>/dev/null
@@ -1018,11 +1016,14 @@ resolver() {
 				;;
 				cleanup)
 					[ -n "$resolverSetSupported" ] || return 1
+					rm -f "$packageDnsmasqFile"
 					config_load 'dhcp'
 					config_foreach _dnsmasq_instance_config 'dnsmasq' 'cleanup'
 				;;
 				configure)
 					[ -n "$resolverSetSupported" ] || return 1
+					rm -f "$packageDnsmasqFile"
+					touch "$packageDnsmasqFile"
 					config_load 'dhcp'
 					if [ "$resolver_instance" = "*" ]; then
 						config_foreach _dnsmasq_instance_config 'dnsmasq' 'setup'
