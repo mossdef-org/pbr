@@ -10,8 +10,6 @@ START=20
 # shellcheck disable=SC2034
 USE_PROCD=1
 
-[ -n "${IPKG_INSTROOT}" ] && return 0
-
 if type extra_command >/dev/null 2>&1; then
 	extra_command 'status' "Generates output required to troubleshoot routing issues
 		Use '-d' option for more detailed output
@@ -67,6 +65,16 @@ readonly ssConfigFile='/etc/shadowsocks'
 readonly torConfigFile='/etc/tor/torrc'
 readonly xrayIfacePrefix='xray_'
 readonly rtTablesFile='/etc/iproute2/rt_tables'
+
+# Silence "Command failed: Not found" for redundant procd service delete calls
+__UBUS_BIN="$(command -v ubus || echo /bin/ubus)"
+ubus() {
+	if [ "$1" = "call" ] && [ "$2" = "service" ] && [ "$3" = "delete" ]; then
+		"$__UBUS_BIN" "$@" >/dev/null 2>&1 || true
+	else
+		"$__UBUS_BIN" "$@"
+	fi
+}
 
 # package config options
 enabled=
@@ -129,11 +137,11 @@ loadEnvironmentFlag=
 loadPackageConfigFlag=
 
 # shellcheck disable=SC1091
-. /lib/functions.sh
+. "${IPKG_INSTROOT}/lib/functions.sh"
 # shellcheck disable=SC1091
-. /lib/functions/network.sh
+. "${IPKG_INSTROOT}/lib/functions/network.sh"
 # shellcheck disable=SC1091
-. /usr/share/libubox/jshn.sh
+. "${IPKG_INSTROOT}/usr/share/libubox/jshn.sh"
 
 debug() { local i j; for i in "$@"; do eval "j=\$$i"; logger "${packageName:+-t $packageName}" "${i}: ${j} "; done; }
 str_contains() { [ "${1//$2}" != "$1" ]; }
