@@ -75,6 +75,50 @@ ubus() {
 		"$__UBUS_BIN" "$@"
 	fi
 }
+# Wrap ip to emulate `ip rule replace` on builds where it's unavailable.
+# We only intercept "rule replace"; everything else is passed through to ip-full.
+ip() {
+	# If first arg is -4 or -6, we might be handling rules
+	if [ "$1" = "-4" ] || [ "$1" = "-6" ]; then
+		local fam="$1"
+		shift
+		# Intercept: ip -4|-6 rule replace ...
+		if [ "$1" = "rule" ] && [ "$2" = "replace" ]; then
+			shift 2
+			# Parse args: capture priority/pref value and rebuild the rest
+			local prio=
+			local newargs=
+			while [ -n "$1" ]; do
+				case "$1" in
+					priority|pref)
+						shift
+						prio="$1"
+						shift
+						continue
+						;;
+				esac
+				newargs="${newargs}${newargs:+ }$1"
+				shift
+			done
+			# If we found a priority, replace = del by priority + add with pref
+			if [ -n "$prio" ]; then
+				"$ip_full" "$fam" rule del priority "$prio" >/dev/null 2>&1 || true
+				# shellcheck disable=SC2086
+				"$ip_full" "$fam" rule add $newargs pref "$prio"
+				return $?
+			fi
+			# No priority found; best-effort: just add what we have
+			# shellcheck disable=SC2086
+			"$ip_full" "$fam" rule add $newargs
+			return $?
+		fi
+		# Not a rule replace: pass through
+		"$ip_full" "$fam" "$@"
+		return $?
+	fi
+	# No -4/-6 family: pass straight through
+	"$ip_full" "$@"
+}
 
 # package config options
 enabled=
@@ -133,6 +177,7 @@ torDnsPort=
 torTrafficPort=
 dnsmasq_features=
 dnsmasq_ubus=
+nft_fw4_dump=
 loadEnvironmentFlag=
 loadPackageConfigFlag=
 
@@ -595,18 +640,18 @@ load_environment() {
 			json add error 'errorRequiredBinaryMissing' 'ip-full'
 			_ret='1'
 		fi
-		if ! nft_call list table inet fw4; then
+		if ! nft_check_element 'table' 'fw4'; then
 			json add error 'errorDefaultFw4TableMissing' 'fw4'
 			_ret='1'
 		fi
 		if is_config_enabled 'dns_policy' || is_tor_running; then
-			if ! nft_call list chain inet fw4 dstnat; then
+			if ! nft_check_element 'chain' 'dstnat'; then
 				json add error 'errorDefaultFw4ChainMissing' 'dstnat'
 				_ret='1'
 			fi
 		fi
 		for i in $chainsList; do
-			if ! nft_call list chain inet fw4 "mangle_${i}"; then
+			if ! nft_check_element 'chain' "mangle_${i}"; then
 				json add error 'errorDefaultFw4ChainMissing' "mangle_${i}"
 				_ret='1'
 			fi
@@ -710,7 +755,21 @@ is_wan_up() {
 	fi
 }
 
+nft() { [ -n "$*" ] && nft_file 'add_command' "$@"; }
+nft4() { nft "$@"; }
+nft6() { [ -n "$ipv6_enabled" ] || return 0; nft "$@"; }
 nft_call() { "$nft" "$@" >/dev/null 2>&1; }
+nft_check_element() {
+	[ -n "$nft_fw4_dump" ] || nft_fw4_dump="$("$nft" list table inet fw4 2>&1)"
+	case "${1}:${2}" in
+		table:fw4)
+			[ -n "$nft_fw4_dump" ]
+		;;
+		chain:*|*)
+			echo "$nft_fw4_dump" | grep "$1" | grep -q "$2"
+		;;
+	esac
+}
 nft_file() {
 	local i
 
@@ -748,9 +807,6 @@ nft_file() {
 		;;
 	esac
 }
-nft() { [ -n "$*" ] && nft_file 'add_command' "$@"; }
-nft4() { nft "$@"; }
-nft6() { [ -n "$ipv6_enabled" ] || return 0; nft "$@"; }
 nftset() {
 	local command="$1" iface="$2" target="${3:-dst}" type="${4:-ip}" uid="$5" comment="$6" param="$7" mark="$7"
 	local nftset4 nftset6 i param4 param6
@@ -1599,15 +1655,17 @@ interface_routing() {
 		create)
 			if is_netifd_table_interface "$iface"; then
 				ipv4_error=0
-				ip -4 rule del table "$tid" prio "$priority" >/dev/null 2>&1
-				try ip -4 rule add fwmark "${mark}/${fw_mask}" table "$tid" priority "$priority" || ipv4_error=1
+#				ip -4 rule del table "$tid" prio "$((priority-1))" >/dev/null 2>&1
+#				ip -4 rule del table "$tid" prio "$priority" >/dev/null 2>&1
+				try ip -4 rule replace fwmark "${mark}/${fw_mask}" lookup main suppress_prefixlength 0 priority "$((priority-1))" || ipv4_error=1
+				try ip -4 rule replace fwmark "${mark}/${fw_mask}" table "$tid" priority "$priority" || ipv4_error=1
 				try nft add chain inet "$nftTable" "${nftPrefix}_mark_${mark}" || ipv4_error=1 
 				try nft add rule inet "$nftTable" "${nftPrefix}_mark_${mark} ${nftRuleParams} mark set mark and ${fw_maskXor} xor ${mark}" || ipv4_error=1
 				try nft add rule inet "$nftTable" "${nftPrefix}_mark_${mark} return" || ipv4_error=1
 				if [ -n "$ipv6_enabled" ]; then
 					ipv6_error=0
 					ip -6 rule del table "$tid" prio "$priority" >/dev/null 2>&1
-					try ip -6 rule add fwmark "${mark}/${fw_mask}" table "$tid" priority "$priority" || ipv6_error=1
+					try ip -6 rule replace fwmark "${mark}/${fw_mask}" table "$tid" priority "$priority" || ipv6_error=1
 				fi
 			else
 				if ! grep -q "$tid ${ipTablePrefix}_${iface}" "$rtTablesFile"; then
@@ -1615,63 +1673,43 @@ interface_routing() {
 					echo "$tid ${ipTablePrefix}_${iface}" >> "$rtTablesFile"
 					sync
 				fi
-				ip -4 rule flush table "$tid" >/dev/null 2>&1
-				ip -4 route flush table "$tid" >/dev/null 2>&1
+#				ip -4 rule flush table "$tid" >/dev/null 2>&1
+#				ip -4 route flush table "$tid" >/dev/null 2>&1
 				if [ -n "$gw4" ] || [ -n "$strict_enforcement" ]; then
 					ipv4_error=0
 					if [ -z "$gw4" ]; then
-						try ip -4 route add unreachable default table "$tid" || ipv4_error=1
+						try ip -4 route replace unreachable default table "$tid" || ipv4_error=1
 					else
-						try ip -4 route add default via "$gw4" dev "$dev" table "$tid" || ipv4_error=1
+						try ip -4 route replace default via "$gw4" dev "$dev" table "$tid" || ipv4_error=1
 					fi
 # shellcheck disable=SC2086
-					while read -r i; do
-						i="$(echo "$i" | sed 's/ linkdown$//')"
-						i="$(echo "$i" | sed 's/ onlink$//')"
-						idev="$(echo "$i" | grep -Eso 'dev [^ ]*' | awk '{print $2}')"
-						if ! is_supported_iface_dev "$idev"; then
-							try ip -4 route add $i table "$tid" || ipv4_error=1
-						fi
-					done << EOF
-					$(ip -4 route list table main)
-EOF
-#					$(ip -4 route list table main proto static)
-					try ip -4 rule add fwmark "${mark}/${fw_mask}" table "$tid" priority "$priority" || ipv4_error=1
+					try ip -4 rule replace fwmark "${mark}/${fw_mask}" lookup main suppress_prefixlength 0 priority "$((priority-1))" || ipv4_error=1
+					try ip -4 rule replace fwmark "${mark}/${fw_mask}" table "$tid" priority "$priority" || ipv4_error=1
 				fi
 				try nft add chain inet "$nftTable" "${nftPrefix}_mark_${mark}" || ipv4_error=1 
 				try nft add rule inet "$nftTable" "${nftPrefix}_mark_${mark} ${nftRuleParams} mark set mark and ${fw_maskXor} xor ${mark}" || ipv4_error=1
 				try nft add rule inet "$nftTable" "${nftPrefix}_mark_${mark} return" || ipv4_error=1
 				if [ -n "$ipv6_enabled" ]; then
 					ipv6_error=0
-					ip -6 rule flush table "$tid" >/dev/null 2>&1
-					ip -6 route flush table "$tid" >/dev/null 2>&1
+#					ip -6 rule flush table "$tid" >/dev/null 2>&1
+#					ip -6 route flush table "$tid" >/dev/null 2>&1
 					if { [ -n "$gw6" ] && [ "$gw6" != "::/0" ]; } || [ -n "$strict_enforcement" ]; then
 						if [ -z "$gw6" ] || [ "$gw6" = "::/0" ]; then
-							try ip -6 route add unreachable default table "$tid" || ipv6_error=1
+							try ip -6 route replace unreachable default table "$tid" || ipv6_error=1
 						elif ip -6 route list table main | grep -q " dev $dev6 "; then
 							if ip -6 address show dev "$dev6" | grep -q "BROADCAST"; then
-								try ip -6 route add default via "$gw6" dev "$dev6" table "$tid" metric "$uplink_interface6_metric" || ipv6_error=1
+								try ip -6 route replace default via "$gw6" dev "$dev6" table "$tid" metric "$uplink_interface6_metric" || ipv6_error=1
 							elif ip -6 address show dev "$dev6" | grep -q "POINTOPOINT"; then
-								try ip -6 route add default dev "$dev6" table "$tid" metric "$uplink_interface6_metric" || ipv6_error=1
+								try ip -6 route replace default dev "$dev6" table "$tid" metric "$uplink_interface6_metric" || ipv6_error=1
 							else
 								json add error 'errorInterfaceRoutingUnknownDevType' "$dev6"
 							fi
-#							if ! ip -6 route add default via "$gw6" dev "$dev6" table "$tid" >/dev/null 2>&1; then  
-#								try ip -6 route add default dev "$dev6" table "$tid" metric "$uplink_interface6_metric" || ipv6_error=1
-#							fi
-							while read -r i; do
-								i="$(echo "$i" | sed 's/ linkdown$//')"
-								i="$(echo "$i" | sed 's/ onlink$//')"
-								# shellcheck disable=SC2086
-								try ip -6 route add $i table "$tid" || ipv6_error=1
-							done << EOF
-							$(ip -6 route list table main | grep " dev $dev6 ")
-EOF
 						else
-							try ip -6 route add "$(ip -6 -o a show "$dev6" | awk '{print $4}')" dev "$dev6" table "$tid" || ipv6_error=1
-							try ip -6 route add default dev "$dev6" table "$tid" || ipv6_error=1
+							try ip -6 route replace "$(ip -6 -o a show "$dev6" | awk '{print $4}')" dev "$dev6" table "$tid" || ipv6_error=1
+							try ip -6 route replace default dev "$dev6" table "$tid" || ipv6_error=1
 						fi
-						try ip -6 rule add fwmark "${mark}/${fw_mask}" table "$tid" priority "$priority" || ipv6_error=1
+						try ip -6 rule replace fwmark "${mark}/${fw_mask}" lookup main suppress_prefixlength 0 priority "$((priority-1))" || ipv6_error=1
+						try ip -6 rule replace fwmark "${mark}/${fw_mask}" table "$tid" priority "$priority" || ipv6_error=1
 					fi
 				fi
 			fi
@@ -1701,7 +1739,9 @@ EOF
 			return "$s"
 		;;
 		delete|destroy)
+			ip -4 rule del table "$tid" prio "$((priority-1))" >/dev/null 2>&1
 			ip -4 rule del table "$tid" prio "$priority" >/dev/null 2>&1
+			ip -6 rule del table "$tid" prio "$((priority-1))" >/dev/null 2>&1
 			ip -6 rule del table "$tid" prio "$priority" >/dev/null 2>&1
 			if ! is_netifd_table_interface "$iface"; then
 				ip -4 rule flush table "$tid" >/dev/null 2>&1
@@ -1726,37 +1766,33 @@ EOF
 			fi
 			if [ -n "$gw4" ] || [ -n "$strict_enforcement" ]; then
 				if [ -z "$gw4" ]; then
-					try ip -4 route add unreachable default table "$tid" || ipv4_error=1
+					try ip -4 route replace unreachable default table "$tid" || ipv4_error=1
 				else
-					try ip -4 route add default via "$gw4" dev "$dev" table "$tid" || ipv4_error=1
+					try ip -4 route replace default via "$gw4" dev "$dev" table "$tid" || ipv4_error=1
 				fi
-				try ip -4 rule add fwmark "${mark}/${fw_mask}" table "$tid" priority "$priority" || ipv4_error=1
+				try ip -4 rule replace fwmark "${mark}/${fw_mask}" lookup main suppress_prefixlength 0 priority "$((priority-1))" || ipv4_error=1
+				try ip -4 rule replace fwmark "${mark}/${fw_mask}" table "$tid" priority "$priority" || ipv4_error=1
 			fi
 			if [ -n "$ipv6_enabled" ]; then
 				ipv6_error=0
 				if { [ -n "$gw6" ] && [ "$gw6" != "::/0" ]; } || [ -n "$strict_enforcement" ]; then
 					if [ -z "$gw6" ] || [ "$gw6" = "::/0" ]; then
-						try ip -6 route add unreachable default table "$tid" || ipv6_error=1
+						try ip -6 route replace unreachable default table "$tid" || ipv6_error=1
 					elif ip -6 route list table main | grep -q " dev $dev6 "; then
 						if ip -6 address show dev "$dev6" | grep -q "BROADCAST"; then
-							try ip -6 route add default via "$gw6" dev "$dev6" table "$tid" metric "$uplink_interface6_metric" || ipv6_error=1
+							try ip -6 route replace default via "$gw6" dev "$dev6" table "$tid" metric "$uplink_interface6_metric" || ipv6_error=1
 						elif ip -6 address show dev "$dev6" | grep -q "POINTOPOINT"; then
-							try ip -6 route add default dev "$dev6" table "$tid" metric "$uplink_interface6_metric" || ipv6_error=1
+							try ip -6 route replace default dev "$dev6" table "$tid" metric "$uplink_interface6_metric" || ipv6_error=1
 						else
 							json add error 'errorInterfaceRoutingUnknownDevType' "$dev6"
 						fi
-						while read -r i; do
-							# shellcheck disable=SC2086
-							try ip -6 route add $i table "$tid" || ipv6_error=1
-						done << EOF
-						$(ip -6 route list table main | grep " dev $dev6 ")
-EOF
 					else
-						try ip -6 route add "$(ip -6 -o a show "$dev6" | awk '{print $4}')" dev "$dev6" table "$tid" || ipv6_error=1
-						try ip -6 route add default dev "$dev6" table "$tid" || ipv6_error=1
+						try ip -6 route replace "$(ip -6 -o a show "$dev6" | awk '{print $4}')" dev "$dev6" table "$tid" || ipv6_error=1
+						try ip -6 route replace default dev "$dev6" table "$tid" || ipv6_error=1
 					fi
 				fi
-				try ip -6 rule add fwmark "${mark}/${fw_mask}" table "$tid" priority "$priority" || ipv6_error=1
+				try ip -6 rule replace fwmark "${mark}/${fw_mask}" lookup main suppress_prefixlength 0 priority "$((priority-1))" || ipv6_error=1
+				try ip -6 rule replace fwmark "${mark}/${fw_mask}" table "$tid" priority "$priority" || ipv6_error=1
 			fi
 			if [ "$ipv4_error" -eq '0' ] || [ "$ipv6_error" -eq '0' ]; then
 				s=0
@@ -1978,7 +2014,7 @@ process_interface() {
 		;;
 	esac
 	ifaceMark="$(printf '0x%06x' $((ifaceMark + uplink_mark)))"
-	ifacePriority="$((ifacePriority - 2))"
+	ifacePriority="$((ifacePriority - 4))"
 	return $s
 }
 
@@ -2357,7 +2393,9 @@ setup_netifd() {
 }
 
 status_service() {
-	local i dev dev6 wanTID
+	local i dev dev6 wanTID ipv6_enabled
+
+	[ "$(uci_get "$packageName" config ipv6_enabled)" = "1" ] && ipv6_enabled='true'
 
 	json_load "$(ubus call system board)"; json_select release; json_get_var dist distribution; json_get_var vers version
 	if [ -n "$wanIface4" ]; then
@@ -2412,22 +2450,20 @@ status_service() {
 	echo "$packageName tables & routing"
 	tableCount="$(grep -c "${packageName}_" "$rtTablesFile")" || tableCount=0
 	wanTID=$(($(get_rt_tables_next_id)-tableCount))
-	i=0; while [ "$i" -lt "$tableCount" ]; do
-		local status_table
-		status_table="$(grep $((wanTID + i)) "$rtTablesFile")"
-		echo "IPv4 table $status_table route:"
-		ip -4 route show table "$((wanTID + i))" | grep default
-		echo "IPv4 table $status_table rule(s):"
-		ip -4 rule list table "$((wanTID + i))"
-		if [ "$(uci_get "$packageName" config ipv6_enabled)" = "1" ]; then
+	for tid in main $(seq "$wanTID" $((wanTID + tableCount - 1))); do
+		status_table="$(grep "^${tid}[[:space:]]" "$rtTablesFile" | awk '{print $2}')"
+		echo "IPv4 table ${tid}${status_table:+ ($status_table)} route:"
+		ip -4 route show table "$tid" | grep default
+		echo "IPv4 table ${tid}${status_table:+ ($status_table)} rule(s):"
+		ip -4 rule list table "$tid"
+		if [ -n "$ipv6_enabled" ]; then
 			echo "$_SEPARATOR_"
-			echo "IPv6 table $status_table route:"
-			ip -6 route show table "$((wanTID + i))" | grep default
-			echo "IPv6 table $status_table rule(s):"
-			ip -6 rule list table "$((wanTID + i))"
+			echo "IPv6 table $tid route:"
+			ip -6 route show table "$tid" | grep default
+			echo "IPv6 table $tid rule(s):"
+			ip -6 rule list table "$tid"
 		fi
 		echo "$_SEPARATOR_"
-		i=$((i + 1))
 	done
 }
 
