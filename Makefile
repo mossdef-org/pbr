@@ -5,7 +5,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=pbr
 PKG_VERSION:=1.2.1
-PKG_RELEASE:=5
+PKG_RELEASE:=7
 PKG_LICENSE:=AGPL-3.0-or-later
 PKG_MAINTAINER:=Stan Grishin <stangri@melmac.ca>
 
@@ -81,19 +81,18 @@ define Package/pbr/default/install
 	$(INSTALL_DIR) $(1)/usr/share/nftables.d
 	$(CP) ./files/usr/share/nftables.d/* $(1)/usr/share/nftables.d/
 	$(INSTALL_DIR) $(1)/etc/uci-defaults
-	$(INSTALL_BIN)  ./files/etc/uci-defaults/90-pbr $(1)/etc/uci-defaults/90-pbr
+	$(INSTALL_BIN) ./files/etc/uci-defaults/90-pbr $(1)/etc/uci-defaults/90-pbr
+	$(INSTALL_BIN) ./files/etc/uci-defaults/91-pbr-nft $(1)/etc/uci-defaults/91-pbr-nft
+	$(INSTALL_BIN) ./files/etc/uci-defaults/99-pbr-version $(1)/etc/uci-defaults/99-pbr-version
 endef
 
 define Package/pbr/install
 $(call Package/pbr/default/install,$(1))
-	$(INSTALL_DIR) $(1)/etc/uci-defaults
-	$(INSTALL_BIN)  ./files/etc/uci-defaults/91-pbr-nft $(1)/etc/uci-defaults/91-pbr-nft
 endef
 
 define Package/pbr-netifd/install
 $(call Package/pbr/default/install,$(1))
 	$(INSTALL_DIR) $(1)/etc/uci-defaults
-	$(INSTALL_BIN)  ./files/etc/uci-defaults/91-pbr-nft $(1)/etc/uci-defaults/91-pbr-nft
 endef
 #	$(INSTALL_BIN)  ./files/etc/uci-defaults/91-pbr-netifd $(1)/etc/uci-defaults/91-pbr-netifd
 

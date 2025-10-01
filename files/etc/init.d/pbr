@@ -152,9 +152,11 @@ nft_set_policy=
 nft_set_timeout=
 netifd_enabled=
 netifd_strict_enforcement=
-netifd_default_interface=
-netifd_default_interface6=
-netifd_local_interface=
+netifd_interface_default=
+netifd_interface_default6=
+netifd_interface_local=
+config_compat=
+config_version=
 
 # run-time
 aghConfigFile='/etc/AdGuardHome/AdGuardHome.yaml'
@@ -468,11 +470,9 @@ get_text() {
 		errorPolicyProcessUnknownEntry) printf "Unknown entry in policy '%s'" "$1";;
 		errorInterfaceRoutingEmptyValues) printf "Received empty tid/mark or interface name when setting up routing";;
 		errorFailedToResolve) printf "Failed to resolve '%s'" "$1";;
-		errorTryFailed) printf "Command failed: %s" "$1";;
+		errorInvalidOVPNConfig) printf "Invalid OpenVPN config for '%s' interface" "$1";;
 		errorNftFileInstall) printf "Failed to install fw4 nft file '%s'" "$1";;
-		errorNftNetifdFileInstall) printf "Failed to install fw4 netifd nft file '%s'" "$1";;
-		errorNftNetifdFileRemove) printf "Failed to remove fw4 netifd nft file '%s'" "$1";;
-		errorMissingNetifdOption) printf "Netifd extensions setup requires setting up option '%s'" "$1";;
+		errorTryFailed) printf "Command failed: %s" "$1";;
 		errorDownloadUrlNoHttps) printf "Failed to download '%s', HTTPS is not supported" "$1";;
 		errorDownloadUrl) printf "Failed to download '%s'" "$1";;
 		errorNoDownloadWithSecureReload) printf "Policy '%s' refers to URL which can't be downloaded in 'secure_reload' mode" "$1";;
@@ -485,6 +485,11 @@ get_text() {
 		errorUplinkDown) printf "Uplink/WAN interface is still down, increase value of 'procd_boot_trigger_delay' option";;
 		errorMktempFileCreate) printf "Failed to create temporary file with mktemp mask: '%s'" "$1";;
 		errorSummary) printf "Errors encountered, please check %s" "$1";;
+		errorNetifdNftFileInstall) printf "Netifd setup: failed to install fw4 netifd nft file '%s'" "$1";;
+		errorNetifdNftFileRemove) printf "Netifd setup: failed to remove fw4 netifd nft file '%s'" "$1";;
+		errorNetifdMissingOption) printf "Netifd setup: required option '%s' is missing" "$1";;
+		errorNetifdInvalidGateway4) printf "Netifd setup: invalid value of netifd_interface_default option '%s'" "$1";;
+		errorNetifdInvalidGateway6) printf "Netifd setup: invalid value of netifd_interface_default6 option '%s'" "$1";;
 		warningInvalidOVPNConfig) printf "Invalid OpenVPN config for '%s' interface" "$1";;
 		warningResolverNotSupported) printf "Resolver set (%s) is not supported on this system" "$resolver_set";;
 		warningPolicyProcessCMD) printf "'%s'" "$1";;
@@ -495,7 +500,8 @@ get_text() {
 		warningDnsmasqInstanceNoConfdir) printf "Dnsmasq instance '%s' targeted in settings, but it doesn't have its own confdir" "$1";;
 		warningDhcpLanForce) printf "Please set 'dhcp.%s.force=1' to speed up service start-up" "$1";;
 		warningSummary) printf "Warnings encountered, please check %s" "$(get_url '#WarningMessagesDetails')";;
-		warningIncompatibleDHCPOption6) printf "Incompatible DHCP Option 6 for interface %s" "$1";;
+		warningIncompatibleDHCPOption6) printf "Incompatible DHCP Option 6 for interface '%s'" "$1";;
+		warningNetifdMissingInterfaceLocal) printf "Netifd setup: option netifd_interface_local is missing, assuming '%s'" "$1";;
 		*) printf "Unknown error/warning '%s'" "$1";;
 	esac
 }
@@ -543,6 +549,9 @@ process_url() {
 load_package_config() {
 	local param="$1"
 	config_load "$packageName"
+	config_get      config_compat             'config' 'config_compat'
+	config_get      config_version            'config' 'config_version'
+	config_get      fw_mask                   'config' 'fw_mask'                  '00ff0000'
 	config_get_bool enabled                   'config' 'enabled'                  '0'
 	config_get      fw_mask                   'config' 'fw_mask'                  '00ff0000'
 	config_get      icmp_interface            'config' 'icmp_interface'
@@ -571,9 +580,9 @@ load_package_config() {
 	config_get      uplink_mark               'config' 'uplink_mark'              '00010000'
 	config_get_bool netifd_enabled            'config' 'netifd_enabled'
 	config_get_bool netifd_strict_enforcement 'config' 'netifd_strict_enforcement'
-	config_get      netifd_default_interface  'config' 'netifd_default_interface'
-	config_get      netifd_default_interface6 'config' 'netifd_default_interface6'
-	config_get      netifd_local_interface    'config' 'netifd_local_interface'   'lan'
+	config_get      netifd_interface_default  'config' 'netifd_interface_default'
+	config_get      netifd_interface_default6 'config' 'netifd_interface_default6'
+	config_get      netifd_interface_local    'config' 'netifd_interface_local'
 
 	fw_mask="0x${fw_mask}"
 	uplink_mark="0x${uplink_mark}"
@@ -843,7 +852,7 @@ nft_file() {
 				cp -f "$nftTempFile" "$nftNetifdPermFile"; then
 				output_okbn
 			else
-				json add error 'errorNftNetifdFileInstall' "$nftTempFile"
+				json add error 'errorNetifdNftFileInstall' "$nftTempFile"
 				output_failn
 			fi
 		;;
@@ -852,7 +861,7 @@ nft_file() {
 			if rm -f "$nftNetifdPermFile"; then
 				output_okbn
 			else
-				json add error 'errorNftNetifdFileRemove' "$nftTempFile"
+				json add error 'errorNetifdNftFileRemove' "$nftTempFile"
 				output_failn
 			fi
 		;;
@@ -1222,19 +1231,19 @@ netifd() {
 		uci_remove 'network' "${rt_name}_ipv4" 2>/dev/null
 		uci_remove 'network' "${rt_name}_ipv6" 2>/dev/null
 
-		if [ -n "$netifd_strict_enforcement" ] && str_contains "$netifd_local_interface" "$iface"; then
-			if [ -n "$netifd_default_interface" ]; then
+		if [ -n "$netifd_strict_enforcement" ] && str_contains "$netifd_interface_local" "$iface"; then
+			if [ -n "$netifd_interface_default" ]; then
 				uci_remove 'network' "${rt_name}_ipv4" 2>/dev/null
 				uci_add 'network' 'rule' "${rt_name}_ipv4"
 				uci_set 'network' "${rt_name}_ipv4" 'in' "${iface}"
-				uci_set 'network' "${rt_name}_ipv4" 'lookup' "${ipTablePrefix}_${netifd_default_interface}"
+				uci_set 'network' "${rt_name}_ipv4" 'lookup' "${ipTablePrefix}_${netifd_interface_default}"
 				uci_set 'network' "${rt_name}_ipv4" 'priority' "${lan_priority}"
 			fi
-			if [ -n "$ipv6_enabled" ] && [ -n "$netifd_default_interface6" ]; then
+			if [ -n "$ipv6_enabled" ] && [ -n "$netifd_interface_default6" ]; then
 				uci_remove 'network' "${rt_name}_ipv6" 2>/dev/null
 				uci_add 'network' 'rule6' "${rt_name}_ipv6"
 				uci_set 'network' "${rt_name}_ipv6" 'in' "${iface}"
-				uci_set 'network' "${rt_name}_ipv6" 'lookup' "${ipTablePrefix}_${netifd_default_interface6}"
+				uci_set 'network' "${rt_name}_ipv6" 'lookup' "${ipTablePrefix}_${netifd_interface_default6}"
 				uci_set 'network' "${rt_name}_ipv6" 'priority' "${lan_priority}"
 			fi
 		lan_priority="$((lan_priority + 1))"
@@ -1243,7 +1252,7 @@ netifd() {
 
 		if [ -z "$target_iface" ] || [ "$target_ifance" = "$iface" ]; then
 			is_wan6 "$iface" && return # TODO: properly process wan/wan6 at some point
-			if [ -z "$netifd_strict_enforcement" ] && [ "$netifd_default_interface" = "$iface" ]; then
+			if [ -z "$netifd_strict_enforcement" ] && [ "$netifd_interface_default" = "$iface" ]; then
 				rt_name='main'
 			fi
 			case "$action" in
@@ -1291,6 +1300,7 @@ netifd() {
 	}
 
 	load_package_config
+	json 'init'
 
 	local action="${1:-install}"
 	local target_iface="$2"
@@ -1306,16 +1316,32 @@ netifd() {
 		;;
 		install)
 			if [ -z "$netifd_strict_enforcement" ]; then
-				json add error 'errorMissingNetifdOption' 'netifd_strict_enforcement'
-				output_error 'errorMissingNetifdOption' 'netifd_strict_enforcement'
+				json add error 'errorNetifdMissingOption' 'netifd_strict_enforcement'
+				output_error 'errorNetifdMissingOption' 'netifd_strict_enforcement'
 				return 1
+			fi
+			if [ -z "$netifd_interface_default" ]; then
+				json add error 'errorNetifdMissingOption' 'netifd_interface_default'
+				output_error 'errorNetifdMissingOption' 'netifd_interface_default'
+				return 1
+			fi
+			if [ "$(uci_get 'network' "$netifd_interface_default")" != 'interface' ]; then
+				json add error 'errorNetifdInvalidGateway4' "$netifd_interface_default"
+				output_error 'errorNetifdInvalidGateway4' "$netifd_interface_default"
+				return 1
+			fi
+			if [ -n "$netifd_interface_default6" ] && [ "$(uci_get 'network' "$netifd_interface_default6")" != 'interface' ]; then
+				json add error 'errorNetifdInvalidGateway6' "$netifd_interface_default6"
+				output_error 'errorNetifdInvalidGateway6' "$netifd_interface_default6"
+				return 1
+			fi
+			if [ -z "$netifd_interface_local" ]; then
+				json add warning 'warningNetifdMissingInterfaceLocal' 'lan'
+				output_error 'warningNetifdMissingInterfaceLocal' 'lan'
+				netifd_interface_local='lan'
 			fi
 			[ "$netifd_strict_enforcement" = '1' ] || unset netifd_strict_enforcement
-			if [ -z "$netifd_default_interface" ]; then
-				json add error 'errorMissingNetifdOption' 'netifd_default_interface'
-				output_error 'errorMissingNetifdOption' 'netifd_default_interface'
-				return 1
-			fi
+#			[ -n "$netifd_interface_default6" ] || unset ipv6_enabled
 		;;
 		uninstall)
 			unset target_iface
