@@ -304,6 +304,11 @@ uci_get_device() {
 }
 uci_get_protocol() { uci_get 'network' "$1" 'proto'; }
 is_default_dev() { [ "$1" = "$(ip -4 r | grep -m1 'dev' | grep -Eso 'dev [^ ]*' | awk '{print $2}')" ]; }
+is_default_interface() {
+	[ "$netifd_interface_default" = "$1" ] && return 0
+	[ "$netifd_interface_default6" = "$1" ] && return 0
+	return 1
+}
 is_disabled_interface() { [ "$(uci_get 'network' "$1" 'disabled')" = '1' ]; }
 is_host() { echo "$1" | grep -qE '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,61}[a-zA-Z0-9]$|^[a-zA-Z0-9]$'; }
 is_hostname() { echo "$1" | grep -qE '^([a-zA-Z0-9]([a-zA-Z0-9_-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$'; }
@@ -835,6 +840,9 @@ nft_file() {
 				output_failn
 			fi
 		;;
+		netifd_exists)
+			[ -s "$nftNetifdPermFile" ] && return 0 || return 1
+		;;
 		netifd_create)
 			rm -f "$nftTempFile" "$nftNetifdPermFile"
 			for i in "$nftTempFile" "$nftNetifdPermFile"; do 
@@ -1233,14 +1241,12 @@ netifd() {
 
 		if [ -n "$netifd_strict_enforcement" ] && str_contains "$netifd_interface_local" "$iface"; then
 			if [ -n "$netifd_interface_default" ]; then
-				uci_remove 'network' "${rt_name}_ipv4" 2>/dev/null
 				uci_add 'network' 'rule' "${rt_name}_ipv4"
 				uci_set 'network' "${rt_name}_ipv4" 'in' "${iface}"
 				uci_set 'network' "${rt_name}_ipv4" 'lookup' "${ipTablePrefix}_${netifd_interface_default}"
 				uci_set 'network' "${rt_name}_ipv4" 'priority' "${lan_priority}"
 			fi
 			if [ -n "$ipv6_enabled" ] && [ -n "$netifd_interface_default6" ]; then
-				uci_remove 'network' "${rt_name}_ipv6" 2>/dev/null
 				uci_add 'network' 'rule6' "${rt_name}_ipv6"
 				uci_set 'network' "${rt_name}_ipv6" 'in' "${iface}"
 				uci_set 'network' "${rt_name}_ipv6" 'lookup' "${ipTablePrefix}_${netifd_interface_default6}"
@@ -1262,13 +1268,11 @@ netifd() {
 					[ "$rt_name" = 'main' ] || echo "${tid} ${rt_name}" >> "$rtTablesFile"
 					uci_set 'network' "${iface}" 'ip4table' "${rt_name}"
 					uci_set 'network' "${iface}" 'ip6table' "${rt_name}"
-					uci_remove 'network' "${rt_name}_ipv4" 2>/dev/null
 					uci_add 'network' 'rule' "${rt_name}_ipv4"
 					uci_set 'network' "${rt_name}_ipv4" 'priority' "${priority}"
 					uci_set 'network' "${rt_name}_ipv4" 'lookup' "${rt_name}"
 					uci_set 'network' "${rt_name}_ipv4" 'mark' "${mark}"
 					uci_set 'network' "${rt_name}_ipv4" 'mask' "${fw_mask}"
-					uci_remove 'network' "${rt_name}_ipv6" 2>/dev/null
 					if [ -n "$ipv6_enabled"]; then
 						uci_add 'network' 'rule6' "${rt_name}_ipv6"
 						uci_set 'network' "${rt_name}_ipv6" 'priority' "${priority}"
@@ -1288,8 +1292,6 @@ netifd() {
 					sed -i "\#${mark}#d" "$nftNetifdPermFile" >/dev/null 2>&1
 					uci_remove 'network' "${iface}" 'ip4table' "${rt_name}" 2>/dev/null
 					uci_remove 'network' "${iface}" 'ip6table' "${rt_name}" 2>/dev/null
-					uci_remove 'network' "${rt_name}_ipv4" 2>/dev/null
-					uci_remove 'network' "${rt_name}_ipv6" 2>/dev/null
 					output_okb
 				;;
 			esac
@@ -1356,6 +1358,7 @@ netifd() {
 
 	case "$action" in
 		install)
+			nft_file 'netifd_install'
 			if [ -z "$target_iface" ]; then
 				uci_set "$packageName" 'config' 'netifd_enabled' '1'
 			fi
@@ -2164,6 +2167,9 @@ process_interface() {
 			if is_default_dev "$dev"; then
 				[ "$verbosity" = '1' ] && dispStatus="$_OK_" || dispStatus="$__OK__"
 			fi
+			if is_default_interface "$iface"; then
+				[ "$verbosity" = '1' ] && dispStatus="$_OKB_" || dispStatus="$__OKB__"
+			fi
 			displayText="${iface}/${dispDev:+$dispDev/}${dispGw4}${ipv6_enabled:+/$dispGw6}"
 			output 2 "Setting up routing for '$displayText' "
 			if interface_routing 'create' "$ifaceTableID" "$ifaceMark" "$iface" "$gw4" "$dev" "$gw6" "$dev6" "$ifacePriority"; then
@@ -2188,6 +2194,9 @@ process_interface() {
 			if is_default_dev "$dev"; then
 				[ "$verbosity" = '1' ] && dispStatus="$_OK_" || dispStatus="$__OK__"
 			fi
+			if is_default_interface "$iface"; then
+				[ "$verbosity" = '1' ] && dispStatus="$_OKB_" || dispStatus="$__OKB__"
+			fi
 			displayText="${iface}/${dispDev:+$dispDev/}${dispGw4}${ipv6_enabled:+/$dispGw6}"
 			interface_routing 'create_user_set' "$ifaceTableID" "$ifaceMark" "$iface" "$gw4" "$dev" "$gw6" "$dev6" "$ifacePriority"
 		;;
@@ -2203,6 +2212,9 @@ process_interface() {
 			[ "$iface" != "$dev" ] && dispDev="$dev"
 			if is_default_dev "$dev"; then
 				[ "$verbosity" = '1' ] && dispStatus="$_OK_" || dispStatus="$__OK__"
+			fi
+			if is_default_interface "$iface"; then
+				[ "$verbosity" = '1' ] && dispStatus="$_OKB_" || dispStatus="$__OKB__"
 			fi
 			displayText="${iface}/${dispDev:+$dispDev/}${dispGw4}${ipv6_enabled:+/$dispGw6}"
 			displayText="${iface}/${dispDev:+$dispDev/}${dispGw4}${ipv6_enabled:+/$dispGw6}"
@@ -2224,6 +2236,9 @@ process_interface() {
 			if is_default_dev "$dev"; then
 				[ "$verbosity" = '1' ] && dispStatus="$_OK_" || dispStatus="$__OK__"
 			fi
+			if is_default_interface "$iface"; then
+				[ "$verbosity" = '1' ] && dispStatus="$_OKB_" || dispStatus="$__OKB__"
+			fi
 			displayText="${iface}/${dispDev:+$dispDev/}${dispGw4}${ipv6_enabled:+/$dispGw6}"
 			gatewaySummary="${gatewaySummary}${displayText}${dispStatus:+ $dispStatus}\n"
 		;;
@@ -2239,6 +2254,9 @@ process_interface() {
 			[ "$iface" != "$dev" ] && dispDev="$dev"
 			if is_default_dev "$dev"; then
 				[ "$verbosity" = '1' ] && dispStatus="$_OK_" || dispStatus="$__OK__"
+			fi
+			if is_default_interface "$iface"; then
+				[ "$verbosity" = '1' ] && dispStatus="$_OKB_" || dispStatus="$__OKB__"
 			fi
 			displayText="${iface}/${dispDev:+$dispDev/}${dispGw4}${ipv6_enabled:+/$dispGw6}"
 			if [ "$iface" = "$reloadedIface" ]; then
@@ -2602,6 +2620,11 @@ status_service() {
 	echo "$status"
 	echo "$_SEPARATOR_"
 	dnsmasq --version 2>/dev/null | sed '/^$/,$d'
+	if nft_file 'netifd_exists'; then
+		echo "$_SEPARATOR_"
+		echo "$packageName fw4 netifd nft file: $nftNetifdPermFile"
+		sed '1d;2d;' "$nftNetifdPermFile"
+	fi
 	if nft_file 'exists'; then
 		echo "$_SEPARATOR_"
 		echo "$packageName fw4 nft file: $nftPermFile"
