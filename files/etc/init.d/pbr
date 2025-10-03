@@ -32,7 +32,7 @@ fi
 
 readonly packageName='pbr'
 readonly PKG_VERSION='dev-test'
-readonly packageCompat='18'
+readonly packageCompat='19'
 readonly serviceName="$packageName $PKG_VERSION"
 readonly packageConfigFile="/etc/config/${packageName}"
 readonly packageDebugFile="/var/run/${packageName}.debug"
