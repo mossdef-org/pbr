@@ -12,6 +12,7 @@ fi
 if netifd 'check'; then
 	rc_procd stop_service 'on_netifd_install'
 	netifd 'install'
+	rc_procd start_service 'on_netifd_install'
 fi
 
 exit 0
