@@ -202,7 +202,7 @@ loadPackageConfigFlag=
 debug() { local i j; for i in "$@"; do eval "j=\$$i"; logger "${packageName:+-t $packageName}" "${i}: ${j} "; done; }
 str_contains() { [ "${1//$2}" != "$1" ]; }
 str_contains_word() { echo "$1" | grep -qw "$2"; }
-str_extras_to_underscore() { echo "$1" | tr '[\. ~`!@#$%^&*()\+/,<>?//;:]' '_'; }
+str_extras_to_underscore() { echo "$1" | sed -E 's/[\. ~`!@#$%^&*()+=,<>?;:\/\\-]/_/g; s/_+/_/g'; }
 str_extras_to_space() { echo "$1" | tr ',;{}' ' '; }
 str_first_value_interface() { local i; for i in $1; do is_supported_interface "$i" && { echo "$i"; break; }; done; }
 str_first_value_ipv4() { local i; for i in $1; do is_ipv4 "$i" && { echo "$i"; break; }; done; }
@@ -305,7 +305,7 @@ uci_get_device() {
 	eval "$1=$__tmp"
 }
 uci_get_protocol() { uci_get 'network' "$1" 'proto'; }
-is_default_dev() { [ "$1" = "$(ip -4 r | grep -m1 'dev' | grep -Eso 'dev [^ ]*' | awk '{print $2}')" ]; }
+is_default_dev() { [ "$1" = "$(ip -4 route show default | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1);exit}}')" ]; }
 is_default_interface() {
 	[ "$netifd_interface_default" = "$1" ] && return 0
 	[ "$netifd_interface_default6" = "$1" ] && return 0
@@ -445,7 +445,7 @@ get_url() {
 get_text() {
 	local r="$1"; shift;
 	case "$r" in
-		errorConfigValidation) printf "Config (%s) validation failure" "$$packageConfigFile";;
+		errorConfigValidation) printf "Config (%s) validation failure" "$packageConfigFile";;
 		errorNoNft) printf "Resolver set support (%s) requires nftables, but nft binary cannot be found" "$resolver_set";;
 		errorResolverNotSupported) printf "Resolver set (%s) is not supported on this system" "$resolver_set";;
 		errorServiceDisabled) printf "The %s service is currently disabled" "$packageName";;
@@ -1074,6 +1074,7 @@ json() {
 			json_select ..
 		;;
 		'init')
+			mkdir -p "${runningStatusFile%/*}"
 			json_init
 			json_add_array 'errors'
 			json_close_array
@@ -1081,7 +1082,6 @@ json() {
 			json_close_array
 		;;
 	esac
-	mkdir -p "${runningStatusFile%/*}"
 	json_dump > "$runningStatusFile"
 	sync
 	json_set_namespace "$_current_namespace"
