@@ -815,6 +815,9 @@ nft_file() {
 				mkdir -p "${i%/*}"
 			done
 			{ echo '#!/usr/sbin/nft -f'; echo ''; } > "$nftTempFile"
+			# Preserve established/related connections that already have a routing mark to prevent breaking existing sessions (e.g., SSH)
+			echo "add rule inet $nftTable ${nftPrefix}_prerouting ct state established,related meta mark & $fw_mask != 0 return" >> "$nftTempFile"
+			echo "add rule inet $nftTable ${nftPrefix}_output ct state established,related meta mark & $fw_mask != 0 return" >> "$nftTempFile"
 			# Insert PBR guards at the top of main caller chains so first PBR match wins, while preserving foreign marks.
 			for chain in $chainsList; do
 				echo "add rule inet $nftTable ${nftPrefix}_${chain} ${nftRuleParams:+$nftRuleParams }meta mark & $fw_mask != 0 return" >> "$nftTempFile"
