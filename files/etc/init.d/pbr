@@ -546,9 +546,9 @@ process_url() {
 		json add error 'errorDownloadUrlNoHttps' "$url"
 	elif $dl_command "$url" "$dl_flag" "$dl_temp_file" 2>/dev/null; then
 		sed '
+			s/[[:space:]]//g	# remove ALL whitespace characters from each line
 			/^#/d	# remove comment lines starting with #
 			/^$/d	# remove completely empty lines
-			s/[[:space:]]//g	# remove ALL whitespace characters from each line
 		' "$dl_temp_file" | sort -u | tr '\n' ' ' # dedupliicate and collapse all remaining lines into a single space-separated line
 	else
 		json add error 'errorDownloadUrl' "$url"
