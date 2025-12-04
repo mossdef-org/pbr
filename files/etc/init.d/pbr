@@ -415,6 +415,7 @@ uci_get_listen_port() {
 	[ -z "$__tmp" ] && unset "$1" && return 1
 	eval "$1=$__tmp"
 }
+sanitize_list() { sed 's/#.*//;s/^[ \t]*//;s/[ \t]*$//;s/[ \t][ \t]*/ /g;/^[ \t]*$/d' "$1" | sort -u | tr '\n' ' '; }
 
 # luci app specific
 is_enabled() { uci_get "$1" 'config' 'enabled'; }
@@ -545,7 +546,7 @@ process_url() {
 	elif is_url_https "$url" && [ -z "$dl_https_supported" ]; then
 		json add error 'errorDownloadUrlNoHttps' "$url"
 	elif $dl_command "$url" "$dl_flag" "$dl_temp_file" 2>/dev/null; then
-		sed 'N;s/\n/ /;s/\s\+/ /g;' "$dl_temp_file"
+		sanitize_list "$dl_temp_file"
 	else
 		json add error 'errorDownloadUrl' "$url"
 	fi
