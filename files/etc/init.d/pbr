@@ -304,7 +304,8 @@ uci_get_device() {
 }
 uci_get_protocol() { uci_get 'network' "$1" 'proto'; }
 is_default_dev() { [ "$1" = "$(ip -4 route show default | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1);exit}}')" ]; }
-is_default_interface() {
+is_netifd_interface_default() {
+	is_netifd_interface "$1" || return 1
 	[ "$netifd_interface_default" = "$1" ] && return 0
 	[ "$netifd_interface_default6" = "$1" ] && return 0
 	return 1
@@ -2168,7 +2169,7 @@ process_interface() {
 			if is_default_dev "$dev"; then
 				[ "$verbosity" = '1' ] && dispStatus="$_OK_" || dispStatus="$__OK__"
 			fi
-			if is_default_interface "$iface"; then
+			if is_netifd_interface_default "$iface"; then
 				[ "$verbosity" = '1' ] && dispStatus="$_OKB_" || dispStatus="$__OKB__"
 			fi
 			displayText="${iface}/${dispDev:+$dispDev/}${dispGw4}${ipv6_enabled:+/$dispGw6}"
@@ -2195,7 +2196,7 @@ process_interface() {
 			if is_default_dev "$dev"; then
 				[ "$verbosity" = '1' ] && dispStatus="$_OK_" || dispStatus="$__OK__"
 			fi
-			if is_default_interface "$iface"; then
+			if is_netifd_interface_default "$iface"; then
 				[ "$verbosity" = '1' ] && dispStatus="$_OKB_" || dispStatus="$__OKB__"
 			fi
 			displayText="${iface}/${dispDev:+$dispDev/}${dispGw4}${ipv6_enabled:+/$dispGw6}"
@@ -2214,7 +2215,7 @@ process_interface() {
 			if is_default_dev "$dev"; then
 				[ "$verbosity" = '1' ] && dispStatus="$_OK_" || dispStatus="$__OK__"
 			fi
-			if is_default_interface "$iface"; then
+			if is_netifd_interface_default "$iface"; then
 				[ "$verbosity" = '1' ] && dispStatus="$_OKB_" || dispStatus="$__OKB__"
 			fi
 			displayText="${iface}/${dispDev:+$dispDev/}${dispGw4}${ipv6_enabled:+/$dispGw6}"
@@ -2237,7 +2238,7 @@ process_interface() {
 			if is_default_dev "$dev"; then
 				[ "$verbosity" = '1' ] && dispStatus="$_OK_" || dispStatus="$__OK__"
 			fi
-			if is_default_interface "$iface"; then
+			if is_netifd_interface_default "$iface"; then
 				[ "$verbosity" = '1' ] && dispStatus="$_OKB_" || dispStatus="$__OKB__"
 			fi
 			displayText="${iface}/${dispDev:+$dispDev/}${dispGw4}${ipv6_enabled:+/$dispGw6}"
@@ -2256,7 +2257,7 @@ process_interface() {
 			if is_default_dev "$dev"; then
 				[ "$verbosity" = '1' ] && dispStatus="$_OK_" || dispStatus="$__OK__"
 			fi
-			if is_default_interface "$iface"; then
+			if is_netifd_interface_default "$iface"; then
 				[ "$verbosity" = '1' ] && dispStatus="$_OKB_" || dispStatus="$__OKB__"
 			fi
 			displayText="${iface}/${dispDev:+$dispDev/}${dispGw4}${ipv6_enabled:+/$dispGw6}"
