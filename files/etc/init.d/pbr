@@ -1238,8 +1238,8 @@ netifd() {
 		local iface="$1" action="${2:-install}"
 		local rt_name="${ipTablePrefix}_${iface%6}"
 
-		uci_remove 'network' "${rt_name}_ipv4" 2>/dev/null
-		uci_remove 'network' "${rt_name}_ipv6" 2>/dev/null
+		uci_remove 'network' 'rule' "${rt_name}_ipv4"  2>/dev/null
+		uci_remove 'network' 'rule6' "${rt_name}_ipv6" 2>/dev/null
 
 		if [ -n "$netifd_strict_enforcement" ] && str_contains "$netifd_interface_local" "$iface"; then
 			if [ -n "$netifd_interface_default" ]; then
