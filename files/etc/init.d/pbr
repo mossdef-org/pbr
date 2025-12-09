@@ -847,7 +847,7 @@ nft_file() {
 		;;
 		netifd_create)
 			rm -f "$nftTempFile" "$nftNetifdPermFile"
-			for i in "$nftTempFile" "$nftNetifdPermFile"; do 
+			for i in "$nftTempFile" "$nftNetifdPermFile"; do
 				mkdir -p "${i%/*}"
 			done
 			{ echo '#!/usr/sbin/nft -f'; echo ''; } > "$nftTempFile"
