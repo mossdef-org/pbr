@@ -12,22 +12,28 @@ PKG_MAINTAINER:=Stan Grishin <stangri@melmac.ca>
 include $(INCLUDE_DIR)/package.mk
 
 define Package/pbr
-	SECTION:=net
-	CATEGORY:=Network
-	SUBMENU:=Routing and Redirection
-	TITLE:=Policy Based Routing Service with nft/nft set support
-	URL:=https://github.com/stangri/pbr/
-	DEPENDS:=+ip-full +jshn +jsonfilter +resolveip
-	DEPENDS+=+!BUSYBOX_DEFAULT_AWK:gawk
-	DEPENDS+=+!BUSYBOX_DEFAULT_GREP:grep
-	DEPENDS+=+!BUSYBOX_DEFAULT_SED:sed
-	DEPENDS+=+kmod-nft-core +kmod-nft-nat +nftables-json
-	PKGARCH:=all
+  SECTION:=net
+  CATEGORY:=Network
+  SUBMENU:=Routing and Redirection
+  TITLE:=Policy Based Routing Service with nft/nft set support
+  URL:=https://github.com/stangri/pbr/
+  PKGARCH:=all
+  DEPENDS:= \
+	+ip-full \
+	+jshn \
+	+jsonfilter \
+	+resolveip \
+	+!BUSYBOX_DEFAULT_AWK:gawk \
+	+!BUSYBOX_DEFAULT_GREP:grep \
+	+!BUSYBOX_DEFAULT_SED:sed \
+	+kmod-nft-core \
+	+kmod-nft-nat \
+	+nftables-json
 endef
 
 define Package/pbr/description
-	This service enables policy-based routing for WAN interfaces and various VPN tunnels.
-	This version supports OpenWrt (23.05 and newer) with firewall4/nft.
+  This service enables policy-based routing for WAN interfaces and various VPN tunnels.
+  This version supports OpenWrt (23.05 and newer) with firewall4/nft.
 endef
 
 define Package/pbr/conffiles
