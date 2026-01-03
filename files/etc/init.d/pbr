@@ -1733,6 +1733,15 @@ dns_policy_process() {
 	src_addr="$(str_extras_to_space "$src_addr")"
 	dest_dns="$(str_extras_to_space "$dest_dns")"
 
+	unset j
+	for i in $src_addr; do
+		if is_url "$i"; then
+			i="$(process_url "$i")"
+		fi
+		j="${j:+$j }$i"
+	done
+	src_addr="$j"
+
 	local dest_dns_interface dest_dns_ipv4 dest_dns_ipv6
 	dest_dns_interface="$(str_first_value_interface "$dest_dns")"
 	dest_dns_ipv4="$(str_first_value_ipv4 "$dest_dns")"
