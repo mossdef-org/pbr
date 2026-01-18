@@ -1920,7 +1920,6 @@ interface_routing() {
 				fi
 				# try ip -4 rule replace fwmark "${mark}/${fw_mask}" lookup 'main' suppress_prefixlength 0 priority "$((priority - 1000))" || ipv4_error=1
 				ip -4 rule del lookup 'main' suppress_prefixlength "$prefixlength" priority "$priority" >/dev/null 2>&1
-				ip -4 rule del lookup 'main' suppress_prefixlength "$prefixlength" priority "$((priority - 1))" >/dev/null 2>&1
 				try ip -4 rule add lookup 'main' suppress_prefixlength "$prefixlength" priority "$((priority - 1))" || ipv4_error=1
 				# {
 					# for prio in $(ip -4 rule show | awk '/lookup main/ && /suppress_prefixlength 0/ {gsub(":", "", $1); print $1}'); do
@@ -1954,7 +1953,6 @@ interface_routing() {
 					fi
 					# try ip -6 rule replace fwmark "${mark}/${fw_mask}" lookup 'main' suppress_prefixlength 0 priority "$((priority - 1000))" || ipv6_error=1
 					ip -6 rule del lookup 'main' suppress_prefixlength "$prefixlength" priority "$priority" >/dev/null 2>&1
-					ip -6 rule del lookup 'main' suppress_prefixlength "$prefixlength" priority "$((priority - 1))" >/dev/null 2>&1
 					try ip -6 rule add lookup 'main' suppress_prefixlength "$prefixlength" priority "$((priority - 1))" || ipv6_error=1
 					# {
 						# for prio in $(ip -6 rule show | awk '/lookup main/ && /suppress_prefixlength 0/ {gsub(":", "", $1); print $1}'); do
@@ -2025,7 +2023,6 @@ interface_routing() {
 				fi
 				# try ip -4 rule replace fwmark "${mark}/${fw_mask}" lookup 'main' suppress_prefixlength 0 priority "$((priority - 1000))" || ipv4_error=1
 				ip -4 rule del lookup 'main' suppress_prefixlength "$prefixlength" priority "$priority" >/dev/null 2>&1
-				ip -4 rule del lookup 'main' suppress_prefixlength "$prefixlength" priority "$((priority - 1))" >/dev/null 2>&1
 				try ip -4 rule add lookup 'main' suppress_prefixlength "$prefixlength" priority "$((priority - 1))" || ipv4_error=1
 				# {
 					# for prio in $(ip -4 rule show | awk '/lookup main/ && /suppress_prefixlength 0/ {gsub(":", "", $1); print $1}'); do
@@ -2056,7 +2053,6 @@ interface_routing() {
 					fi
 					# try ip -6 rule replace fwmark "${mark}/${fw_mask}" lookup 'main' suppress_prefixlength 0 priority "$((priority - 1000))" || ipv6_error=1
 					ip -6 rule del lookup 'main' suppress_prefixlength "$prefixlength" priority "$priority" >/dev/null 2>&1
-					ip -6 rule del lookup 'main' suppress_prefixlength "$prefixlength" priority "$((priority - 1))" >/dev/null 2>&1
 					try ip -6 rule add lookup 'main' suppress_prefixlength "$prefixlength" priority "$((priority - 1))" || ipv6_error=1
 					# {
 						# for prio in $(ip -6 rule show | awk '/lookup main/ && /suppress_prefixlength 0/ {gsub(":", "", $1); print $1}'); do
