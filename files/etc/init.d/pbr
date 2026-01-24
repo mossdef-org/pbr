@@ -2182,7 +2182,7 @@ process_interface() {
 	fi
 
 	if is_ovpn "$iface" && ! is_ovpn_valid "$iface"; then
-		: || json add warning 'warningInvalidOVPNConfig' "$iface"
+		: # output_warning 'warningInvalidOVPNConfig' "$iface"
 	fi
 
 	network_get_device dev4 "$iface"
