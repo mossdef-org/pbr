@@ -1383,7 +1383,7 @@ netifd() {
 			fi
 			if [ -z "$netifd_interface_local" ]; then
 				json add warning 'warningNetifdMissingInterfaceLocal' 'lan'
-				output_error 'warningNetifdMissingInterfaceLocal' 'lan'
+				output_warning 'warningNetifdMissingInterfaceLocal' 'lan'
 				netifd_interface_local='lan'
 			fi
 			[ "$netifd_strict_enforcement" = '1' ] || unset netifd_strict_enforcement
@@ -1433,6 +1433,7 @@ dns_policy_routing() {
 	local negation value dest4 dest6 first_value
 	local inline_set_ipv4_empty_flag inline_set_ipv6_empty_flag
 	local name="$1" src_addr="$2" dest_dns="$3" uid="$4" dest_dns_port="$5"
+	local dest_dns_ipv4="$6" dest_dns_ipv6="$7"
 	local chain='dstnat' iface='dns'
 
 		if [ -z "${dest_dns_ipv4}${dest_dns_ipv6}" ]; then
@@ -1819,7 +1820,7 @@ dns_policy_process() {
 			if str_contains "$filter_group_src_addr" 'ipv6' && [ -z "$dest_dns_ipv6" ] ; then
 					continue
 			fi
-			dns_policy_routing "$name" "$filtered_value_src_addr" "$dest_dns" "$uid" "$dest_dns_port"
+			dns_policy_routing "$name" "$filtered_value_src_addr" "$dest_dns" "$uid" "$dest_dns_port" "$dest_dns_ipv4" "$dest_dns_ipv6"
 		fi
 	done
 
