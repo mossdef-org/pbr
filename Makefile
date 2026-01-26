@@ -52,6 +52,8 @@ define Package/pbr/install
 	$(SED) "s|^\(readonly PKG_VERSION\).*|\1='$(PKG_VERSION)-r$(PKG_RELEASE)'|" $(1)/etc/init.d/pbr
 	$(INSTALL_DIR) $(1)/etc/config
 	$(INSTALL_CONF) ./files/etc/config/pbr $(1)/etc/config/pbr
+	$(INSTALL_DIR) $(1)/etc/hotplug.d/iface
+	$(INSTALL_DATA) ./files/etc/hotplug.d/iface/70-pbr $(1)/etc/hotplug.d/iface/70-pbr
 	$(INSTALL_DIR) $(1)/usr/share/pbr
 	$(INSTALL_DATA) ./files/usr/share/pbr/.keep $(1)/usr/share/pbr/.keep
 	$(INSTALL_DATA) ./files/usr/share/pbr/pbr.user.dnsprefetch $(1)/usr/share/pbr/pbr.user.dnsprefetch
