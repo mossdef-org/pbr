@@ -1220,7 +1220,11 @@ netifd() {
 	# Usage: netifd install [iface] | netifd remove [iface] | netifd uninstall
 	_netifd_process_interface() {
 		local iface="$1" action="${2:-install}"
-		local rt_name="${ipTablePrefix}_${iface%6}"
+		# Normalize table name for split uplink scenarios
+		local rt_name="${ipTablePrefix}_${iface}"
+		if is_split_uplink && [ "$iface" = "$uplink_interface6" ]; then
+			rt_name="${ipTablePrefix}_${uplink_interface4}"
+		fi
 
 		# clean-up first for repeated netifd install calls in different netifd_strict_enforcement modes
 		uci_remove 'network' "${iface}" 'ip4table' 2>/dev/null
@@ -1936,15 +1940,20 @@ interface_routing() {
 	case "$action" in
 		create)
 			is_netifd_interface "$iface" && return 0
-			if ! grep -q "$tid ${ipTablePrefix}_${iface}" "$rtTablesFile"; then
-				sed -i "/${ipTablePrefix}_${iface}/d" "$rtTablesFile"
-				echo "$tid ${ipTablePrefix}_${iface}" >> "$rtTablesFile"
+			# Normalize table name for split uplink scenarios
+			local table_iface="$iface"
+			if is_split_uplink && [ "$iface" = "$uplink_interface6" ]; then
+				table_iface="$uplink_interface4"
+			fi
+			if ! grep -q "$tid ${ipTablePrefix}_${table_iface}" "$rtTablesFile"; then
+				sed -i "/${ipTablePrefix}_${table_iface}/d" "$rtTablesFile"
+				echo "$tid ${ipTablePrefix}_${table_iface}" >> "$rtTablesFile"
 				sync
 			fi
 
 			if [ -n "$dev4" ]; then
 				ipv4_error=0
-				ip -4 rule flush table "$tid" >/dev/null 2>&1
+				ip -4 rule flush fwmark "${mark}/${fw_mask}" table "$tid" >/dev/null 2>&1
 				ip -4 route flush table "$tid" >/dev/null 2>&1
 
 				if [ -n "$gw4" ] || [ -n "$strict_enforcement" ]; then
@@ -1973,7 +1982,7 @@ interface_routing() {
 
 			if [ -n "$ipv6_enabled" ] && [ -n "$dev6" ]; then
 				ipv6_error=0
-				ip -6 rule flush table "$tid" >/dev/null 2>&1
+				ip -6 rule flush fwmark "${mark}/${fw_mask}" table "$tid" >/dev/null 2>&1
 				ip -6 route flush table "$tid" >/dev/null 2>&1
 
 				if { [ -n "$gw6" ] && [ "$gw6" != "::/0" ]; } || [ -n "$strict_enforcement" ]; then
@@ -2034,7 +2043,12 @@ interface_routing() {
 			ip -4 route flush table "$tid" >/dev/null 2>&1
 			ip -6 rule flush table "$tid" >/dev/null 2>&1
 			ip -6 route flush table "$tid" >/dev/null 2>&1
-			sed -i "/${ipTablePrefix}_${iface}\$/d" "$rtTablesFile"
+			# Normalize table name for split uplink scenarios
+			local table_iface="$iface"
+			if is_split_uplink && [ "$iface" = "$uplink_interface6" ]; then
+				table_iface="$uplink_interface4"
+			fi
+			sed -i "/${ipTablePrefix}_${table_iface}\$/d" "$rtTablesFile"
 			sync
 			return "$s"
 		;;
@@ -2129,6 +2143,25 @@ process_interface() {
 					ip -6 rule del lookup 'main' suppress_prefixlength "$prefixlength" priority "$ifacePriority" >/dev/null 2>&1
 					try ip -6 rule add lookup 'main' suppress_prefixlength "$prefixlength" priority "$ifacePriority" || ipv6_error=1
 				fi
+				_wg_server() {
+					local iface="$1"
+					if is_wg_server "$iface" && ! is_ignored_interface "$iface"; then
+						local disabled listen_port
+						config_get disabled "$iface" 'disabled'
+						config_get listen_port "$iface" 'listen_port'
+						if [ "$disabled" != '1' ] && [ -n "$listen_port" ]; then
+							if [ -n "$uplink_interface4" ]; then
+								ip rule del sport "$listen_port" table "pbr_${uplink_interface4}" >/dev/null 2>&1
+								ip rule add sport "$listen_port" table "pbr_${uplink_interface4}" >/dev/null 2>&1
+							fi
+							if [ -n "$ipv6_enabled" ] && [ -n "$uplink_interface6" ]; then
+								ip -6 rule del sport "$listen_port" table "pbr_${uplink_interface6}" >/dev/null 2>&1
+								ip -6 rule add sport "$listen_port" table "pbr_${uplink_interface6}" >/dev/null 2>&1
+							fi
+						fi
+					fi
+				}
+				config_foreach _wg_server 'interface'
 				return 0
 			;;
 		esac
@@ -2149,23 +2182,9 @@ process_interface() {
 	fi
 
 	if is_wg_server "$iface" && ! is_ignored_interface "$iface"; then
-		local disabled listen_port
-		disabled="$(uci_get 'network' "$iface" 'disabled')"
-		listen_port="$(uci_get 'network' "$iface" 'listen_port')"
 		case "$action" in
-			create|reload|reload_interface)
-				if [ "$disabled" != '1' ] && [ -n "$listen_port" ]; then
-					if [ -n "$uplink_interface4" ]; then
-						ip rule del sport "$listen_port" table "pbr_${uplink_interface4}" >/dev/null 2>&1
-						ip rule add sport "$listen_port" table "pbr_${uplink_interface4}" >/dev/null 2>&1
-					fi
-					if [ -n "$ipv6_enabled" ] && [ -n "$uplink_interface6" ]; then
-						ip -6 rule del sport "$listen_port" table "pbr_${uplink_interface6}" >/dev/null 2>&1
-						ip -6 rule add sport "$listen_port" table "pbr_${uplink_interface6}" >/dev/null 2>&1
-					fi
-				fi
-			;;
 			destroy)
+				local listen_port="$(uci_get 'network' "$iface" 'listen_port')"
 				if [ -n "$listen_port" ]; then
 					ip rule del sport "$listen_port" table "pbr_${uplink_interface4}" >/dev/null 2>&1
 					ip -6 rule del sport "$listen_port" table "pbr_${uplink_interface6}" >/dev/null 2>&1
