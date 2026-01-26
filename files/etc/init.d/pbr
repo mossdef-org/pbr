@@ -2478,7 +2478,7 @@ start_service() {
 	load_environment "${param:-on_start}" "$(load_validate_config)" || return 1
 
 	output "Processing environment (${param:-on_start}) "
-	is_wan_up "$param" || { output_error "$(get_text 'errorUplinkDown')";  return 1; }
+	is_wan_up "$param" || { output_warning "$(get_text 'errorUplinkDown')"; pbrBootFlag=1; return 0; }
 
 	process_interface 'all' 'reset_globals'
 	config_foreach process_interface 'interface' 'enumerate_interface'
@@ -2663,7 +2663,11 @@ service_triggers() {
 	local n
 	if [ -n "$pbrBootFlag" ]; then
 		output "Setting trigger (on_boot) "
-		procd_add_raw_trigger "interface.*.up" "$procd_boot_trigger_delay" "/etc/init.d/${packageName}" start && output_okn || output_failn
+		if [ -n "$(uci_get network "$uplink_interface4")" ]; then
+			procd_add_raw_trigger "interface.$uplink_interface4.up" "$procd_boot_trigger_delay" "/etc/init.d/${packageName}" start && output_okn || output_failn
+		else
+			procd_add_raw_trigger "interface.*.up" "$procd_boot_trigger_delay" "/etc/init.d/${packageName}" start && output_okn || output_failn
+		fi
 	else
 		PROCD_RELOAD_DELAY=$(( procd_reload_delay * 1000 ))
 		procd_open_validate
