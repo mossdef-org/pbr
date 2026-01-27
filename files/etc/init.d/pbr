@@ -2154,10 +2154,10 @@ process_interface() {
 							if [ -n "$uplink_interface4" ]; then
 								ip rule del sport "$listen_port" table "pbr_${uplink_interface4}" >/dev/null 2>&1
 								ip rule add sport "$listen_port" table "pbr_${uplink_interface4}" >/dev/null 2>&1
-							fi
-							if [ -n "$ipv6_enabled" ] && [ -n "$uplink_interface6" ]; then
-								ip -6 rule del sport "$listen_port" table "pbr_${uplink_interface6}" >/dev/null 2>&1
-								ip -6 rule add sport "$listen_port" table "pbr_${uplink_interface6}" >/dev/null 2>&1
+								if [ -n "$ipv6_enabled" ]; then
+									ip -6 rule del sport "$listen_port" table "pbr_${uplink_interface4}" >/dev/null 2>&1
+									ip -6 rule add sport "$listen_port" table "pbr_${uplink_interface4}" >/dev/null 2>&1
+								fi
 							fi
 						fi
 					fi
@@ -2188,7 +2188,7 @@ process_interface() {
 				local listen_port="$(uci_get 'network' "$iface" 'listen_port')"
 				if [ -n "$listen_port" ]; then
 					ip rule del sport "$listen_port" table "pbr_${uplink_interface4}" >/dev/null 2>&1
-					ip -6 rule del sport "$listen_port" table "pbr_${uplink_interface6}" >/dev/null 2>&1
+					ip -6 rule del sport "$listen_port" table "pbr_${uplink_interface4}" >/dev/null 2>&1
 				fi
 			;;
 		esac
