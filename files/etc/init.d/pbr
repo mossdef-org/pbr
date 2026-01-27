@@ -32,7 +32,7 @@ fi
 
 readonly packageName='pbr'
 readonly PKG_VERSION='dev-test'
-readonly packageCompat='22'
+readonly packageCompat='23'
 readonly serviceName="$packageName $PKG_VERSION"
 readonly packageConfigFile="/etc/config/${packageName}"
 readonly packageDebugFile="/var/run/${packageName}.debug"
@@ -514,6 +514,7 @@ get_text() {
 		warningSummary) printf "Warnings encountered, please check %s" "$(get_url '#WarningMessagesDetails')";;
 		warningIncompatibleDHCPOption6) printf "Incompatible DHCP Option 6 for interface '%s'" "$1";;
 		warningNetifdMissingInterfaceLocal) printf "Netifd setup: option netifd_interface_local is missing, assuming '%s'" "$1";;
+		warningUplinkDown) printf "Uplink/WAN interface is still down, going back to boot mode";;
 		*) printf "Unknown error/warning '%s'" "$1";;
 	esac
 }
@@ -2478,7 +2479,12 @@ start_service() {
 	load_environment "${param:-on_start}" "$(load_validate_config)" || return 1
 
 	output "Processing environment (${param:-on_start}) "
-	is_wan_up "$param" || { output_warning "$(get_text 'errorUplinkDown')"; pbrBootFlag=1; return 0; }
+	if ! is_wan_up "$param"; then
+		output_failn
+		output_warning "$(get_text 'warningUplinkDown')"
+		pbrBootFlag=1
+		return 0
+	fi
 
 	process_interface 'all' 'reset_globals'
 	config_foreach process_interface 'interface' 'enumerate_interface'
@@ -2664,11 +2670,6 @@ service_triggers() {
 	if [ -n "$pbrBootFlag" ]; then
 		output "Setting trigger (on_boot) "
 		procd_add_raw_trigger "interface.*.up" "$procd_boot_trigger_delay" "/etc/init.d/${packageName}" start && output_okn || output_failn
-#		if [ -n "$(uci_get network "$uplink_interface4")" ]; then
-#			procd_add_raw_trigger "interface.$uplink_interface4.up" "$procd_boot_trigger_delay" "/etc/init.d/${packageName}" start && output_okn || output_failn
-#		else
-#			procd_add_raw_trigger "interface.*.up" "$procd_boot_trigger_delay" "/etc/init.d/${packageName}" start && output_okn || output_failn
-#		fi
 	else
 		PROCD_RELOAD_DELAY=$(( procd_reload_delay * 1000 ))
 		procd_open_validate
