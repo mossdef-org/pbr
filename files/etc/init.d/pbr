@@ -2597,6 +2597,7 @@ start_service() {
 			resolver 'configure'
 			cleanup 'rt_tables'
 			cleanup 'main_chains'
+			cleanup 'sets'
 			nft_file 'create' 'main'
 			output_okn
 			output 1 'Processing interfaces '
@@ -2762,10 +2763,12 @@ stop_service() {
 	unset ifaceMark
 	unset ifaceTableID
 	output 'Resetting resolver '
-	resolver 'store_hash'
-	resolver 'cleanup'
+	if resolver 'store_hash' && resolver 'cleanup'; then
+		output_okn
+	else
+		output_failn
+	fi
 	resolver 'compare_hash' && resolver 'restart'
-	output_okn
 
 	if [ -n "$enabled" ]; then
 		if [ -n "$nft_file_mode" ]; then
