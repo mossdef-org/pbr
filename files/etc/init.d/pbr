@@ -32,7 +32,7 @@ fi
 
 readonly packageName='pbr'
 readonly PKG_VERSION='dev-test'
-readonly packageCompat='23'
+readonly packageCompat='24'
 readonly serviceName="$packageName $PKG_VERSION"
 readonly packageConfigFile="/etc/config/${packageName}"
 readonly packageDebugFile="/var/run/${packageName}.debug"
@@ -57,8 +57,8 @@ readonly nft="$(command -v nft)"
 readonly nftIPv4Flag='ip'
 readonly nftIPv6Flag='ip6'
 readonly nftTempFile="/var/run/${packageName}.nft"
-readonly nftPermFile="/usr/share/nftables.d/ruleset-post/30-${packageName}.nft"
-readonly nftNetifdPermFile="/usr/share/nftables.d/ruleset-post/20-${packageName}-netifd.nft"
+readonly nftMainFile="/usr/share/nftables.d/ruleset-post/30-${packageName}.nft"
+readonly nftNetifdFile="/usr/share/nftables.d/ruleset-post/20-${packageName}-netifd.nft"
 readonly nftPrefix="$packageName"
 readonly nftTable='fw4'
 readonly chainsList='forward output prerouting'
@@ -423,8 +423,8 @@ sanitize_list() { sed 's/#.*//;s/^[ \t]*//;s/[ \t]*$//;s/[ \t][ \t]*/ /g;/^[ \t]
 
 # luci app specific
 is_enabled() { uci_get "$1" 'config' 'enabled'; }
-is_running_nft_file() { [ -s "$nftPermFile" ]; }
-is_running_nft() { "$nft" list table inet fw4 | grep chain | grep -q pbr_mark_ >/dev/null 2>&1; }
+is_running_nft_file() { [ -s "$nftMainFile" ]; }
+is_running_nft() { "$nft" list table inet "$nftTable" | grep chain | grep -q "${nftPrefix}_mark_" >/dev/null 2>&1; }
 check_nft() { [ -x "$nft" ]; }
 check_agh() { [ -x "$agh" ] && { [ -s "$aghConfigFile" ] || [ -s "${agh%/*}/AdGuardHome.yaml" ]; }; }
 check_dnsmasq() { command -v dnsmasq >/dev/null 2>&1; }
@@ -483,7 +483,7 @@ get_text() {
 		errorInterfaceMarkOverflow) printf "Interface mark for '%s' exceeds the fwmask value" "$1";;
 		errorFailedToResolve) printf "Failed to resolve '%s'" "$1";;
 		errorInvalidOVPNConfig) printf "Invalid OpenVPN config for '%s' interface" "$1";;
-		errorNftFileInstall) printf "Failed to install fw4 nft file '%s'" "$1";;
+		errorNftMainFileInstall) printf "Failed to install fw4 nft file '%s'" "$1";;
 		errorTryFailed) printf "Command failed: %s" "$1";;
 		errorDownloadUrlNoHttps) printf "Failed to download '%s', HTTPS is not supported" "$1";;
 		errorDownloadUrl) printf "Failed to download '%s'" "$1";;
@@ -497,8 +497,8 @@ get_text() {
 		errorUplinkDown) printf "Uplink/WAN interface is still down, increase value of 'procd_boot_trigger_delay' option";;
 		errorMktempFileCreate) printf "Failed to create temporary file with mktemp mask: '%s'" "$1";;
 		errorSummary) printf "Errors encountered, please check %s" "$1";;
-		errorNetifdNftFileInstall) printf "Netifd setup: failed to install fw4 netifd nft file '%s'" "$1";;
-		errorNetifdNftFileRemove) printf "Netifd setup: failed to remove fw4 netifd nft file '%s'" "$1";;
+		errorNftNetifdFileInstall) printf "Netifd setup: failed to install fw4 netifd nft file '%s'" "$1";;
+		errorNftNetifdFileDelete) printf "Netifd setup: failed to remove fw4 netifd nft file '%s'" "$1";;
 		errorNetifdMissingOption) printf "Netifd setup: required option '%s' is missing" "$1";;
 		errorNetifdInvalidGateway4) printf "Netifd setup: invalid value of netifd_interface_default option '%s'" "$1";;
 		errorNetifdInvalidGateway6) printf "Netifd setup: invalid value of netifd_interface_default6 option '%s'" "$1";;
@@ -795,7 +795,7 @@ is_wan_up() {
 	fi
 }
 
-nft() { [ -n "$*" ] && nft_file 'add_command' "$@"; }
+nft() { [ -n "$*" ] && nft_file 'add' 'main' "$@"; }
 nft4() { nft "$@"; }
 nft6() { [ -n "$ipv6_enabled" ] || return 0; nft "$@"; }
 nft_call() { "$nft" "$@" >/dev/null 2>&1; }
@@ -811,86 +811,99 @@ nft_check_element() {
 	esac
 }
 nft_file() {
-	local i chain
-	case "$1" in
-		add|add_command)
-			shift
+	local i chain command="$1" target="$2"
+	case "$command:$target" in
+		add:*)
+			shift 2
 			echo "$*" >> "$nftTempFile"
 		;;
-		create)
-			rm -f "$nftTempFile" "$nftPermFile"
-			for i in "$nftTempFile" "$nftPermFile"; do
+		create:main)
+			rm -f "$nftTempFile" "$nftMainFile"
+			for i in "$nftTempFile" "$nftMainFile"; do
 				mkdir -p "${i%/*}"
 			done
 			{ echo '#!/usr/sbin/nft -f'; echo ''; } > "$nftTempFile"
-			# Insert PBR guards at the top of main caller chains so first PBR match wins, while preserving foreign marks.
+			# Create pbr chains in fw4 table
+			for chain in dstnat $chainsList; do
+				echo "add chain inet $nftTable ${nftPrefix}_${chain} {}" >> "$nftTempFile"
+			done
+			echo "" >> "$nftTempFile"
+			# Add jump rules from fw4 chains to pbr chains
+			echo "add rule inet $nftTable dstnat jump ${nftPrefix}_dstnat" >> "$nftTempFile"
+			echo "add rule inet $nftTable mangle_prerouting jump ${nftPrefix}_prerouting" >> "$nftTempFile"
+			echo "add rule inet $nftTable mangle_output jump ${nftPrefix}_output" >> "$nftTempFile"
+			echo "add rule inet $nftTable mangle_forward jump ${nftPrefix}_forward" >> "$nftTempFile"
+			echo "" >> "$nftTempFile"
+			# Insert PBR guards at the top of pbr chains so first PBR match wins, while preserving foreign marks.
 			for chain in $chainsList; do
 				echo "add rule inet $nftTable ${nftPrefix}_${chain} ${nftRuleParams:+$nftRuleParams }meta mark & $fw_mask != 0 return" >> "$nftTempFile"
 			done
 		;;
-		delete|rm|remove)
-			rm -f "$nftTempFile" "$nftPermFile"
-		;;
-		enabled)
-			return 0
-		;;
-		exists)
-			[ -s "$nftPermFile" ] && return 0 || return 1
-		;;
-		install)
-			[ -s "$nftTempFile" ] || return 1
-			output "Installing fw4 nft file "
-			if nft_call -c -f "$nftTempFile" && \
-				cp -f "$nftTempFile" "$nftPermFile"; then
-				output_okn
-			else
-				json add error 'errorNftFileInstall' "$nftTempFile"
-				output_failn
-			fi
-		;;
-		match_temp)
-			grep -q "$2" "$nftTempFile"
-		;;
-		netifd_exists)
-			[ -s "$nftNetifdPermFile" ] && return 0 || return 1
-		;;
-		netifd_create)
-			rm -f "$nftTempFile" "$nftNetifdPermFile"
-			for i in "$nftTempFile" "$nftNetifdPermFile"; do
+		create:netifd)
+			rm -f "$nftTempFile" "$nftNetifdFile"
+			for i in "$nftTempFile" "$nftNetifdFile"; do
 				mkdir -p "${i%/*}"
 			done
 			{ echo '#!/usr/sbin/nft -f'; echo ''; } > "$nftTempFile"
 		;;
-		netifd_delete|netifd_rm)
-			rm -f "$nftNetifdPermFile"
+		delete:main)
+			rm -f "$nftTempFile" "$nftMainFile"
 		;;
-		netifd_install)
+		delete:netifd)
+			output "Removing fw4 netifd nft file "
+			if rm -f "$nftNetifdFile"; then
+				output_okbn
+			else
+				json add error 'errorNftNetifdFileDelete' "$nftNetifdFile"
+				output_failn
+			fi
+		;;
+		exists:main)
+			[ -s "$nftMainFile" ] && return 0 || return 1
+		;;
+		exists:netifd)
+			[ -s "$nftNetifdFile" ] && return 0 || return 1
+		;;
+		install:main)
+			[ -s "$nftTempFile" ] || return 1
+			output "Installing fw4 nft file "
+			if nft_call -c -f "$nftTempFile" && \
+				cp -f "$nftTempFile" "$nftMainFile"; then
+				output_okn
+			else
+				json add error 'errorNftMainFileInstall' "$nftTempFile"
+				output_failn
+			fi
+		;;
+		install:netifd)
 			[ -s "$nftTempFile" ] || return 1
 			output "Installing fw4 netifd nft file "
 			if nft_call -c -f "$nftTempFile" && \
-				cp -f "$nftTempFile" "$nftNetifdPermFile"; then
+				cp -f "$nftTempFile" "$nftNetifdFile"; then
 				output_okbn
 			else
-				json add error 'errorNetifdNftFileInstall' "$nftTempFile"
+				json add error 'errorNftNetifdFileInstall' "$nftTempFile"
 				output_failn
 			fi
 		;;
-		netifd_remove)
-			output "Removing fw4 netifd nft file "
-			if rm -f "$nftNetifdPermFile"; then
-				output_okbn
-			else
-				json add error 'errorNetifdNftFileRemove' "$nftTempFile"
-				output_failn
-			fi
+		match:temp)
+			grep -q "$3" "$nftTempFile"
 		;;
-		sed_temp|sed_temp_file)
-			shift
+		sed:temp)
+			shift 2
 			sed -i "$*" "$nftTempFile" >/dev/null 2>&1
 		;;
-		sed_netifd|sed_netifd_file)
-			shift
-			sed -i "$*" "$nftNetifdPermFile" >/dev/null 2>&1
+		sed:netifd)
+			shift 2
+			sed -i "$*" "$nftNetifdFile" >/dev/null 2>&1
+		;;
+		show:main)
+			echo "$packageName fw4 nft file: $nftMainFile"
+			sed '1d;2d;' "$nftMainFile"
+		;;
+		show:netifd)
+			echo "$packageName fw4 netifd nft file: $nftNetifdFile"
+			sed '1d;2d;' "$nftNetifdFile"
 		;;
 	esac
 }
@@ -1015,13 +1028,42 @@ nftset() {
 	fi
 }
 
-cleanup_rt_tables() {
-	local i
-# shellcheck disable=SC2013
-	for i in $(grep -oh "${ipTablePrefix}_.*" "$rtTablesFile"); do
-		! is_netifd_table "$i" && sed -i "/${i}/d" "$rtTablesFile"
-	done
-	sync
+cleanup() {
+	local action="$1" i prio
+	case "$action" in
+		rt_tables)
+			# shellcheck disable=SC2013
+			for i in $(grep -oh "${ipTablePrefix}_.*" "$rtTablesFile"); do
+				! is_netifd_table "$i" && sed -i "/${i}/d" "$rtTablesFile"
+			done
+			sync
+		;;
+		main_table)
+			for prio in $(ip -4 rule show \
+			    | awk -v mask="$fw_mask" '/fwmark/ && $0 ~ mask && /lookup main/ && /suppress_prefixlength 0/ {sub(":", "", $1); print $1}'
+			); do
+			    ip -4 rule del priority "$prio"
+			done
+		;;
+		main_chains)
+			for i in $chainsList dstnat; do
+				i="$(str_to_lower "$i")"
+				nft_call flush chain inet "$nftTable" "${i}"
+			done
+		;;
+		marking_chains)
+			for i in $(get_mark_nft_chains); do
+			#	nft_call flush chain inet "$nftTable" "$i"
+				nft_call delete chain inet "$nftTable" "$i"
+			done
+		;;
+		sets)
+			for i in $(get_nft_sets); do
+			#	nft_call flush set inet "$nftTable" "$i"
+				nft_call delete set inet "$nftTable" "$i"
+			done
+		;;
+	esac
 }
 
 json() {
@@ -1265,7 +1307,7 @@ netifd() {
 
 		if is_split_uplink; then
 			if is_wan "$iface" || is_wan6 "$iface"; then
-				if [ -n "$_uplinkMark" ] && [ -n "$_uplinkPriority" ] && [ -n "$_uplinkTID" ]; then
+				if [ -n "$_uplinkMark" ] && [ -n "$_uplinkPriority" ] && [ -n "$_uplinkTableID" ]; then
 					_mark="$_uplinkMark"
 					_priority="$_uplinkPriority"
 					_tid="$_uplinkTableID"
@@ -1305,14 +1347,13 @@ netifd() {
 					if ! is_split_uplink || ! is_wan6 "$iface"; then
 					[ "$rt_name" = 'main' ] || sed -i "\#${rt_name}\$#d" "$rtTablesFile" >/dev/null 2>&1
 					[ "$rt_name" = 'main' ] || echo "${_tid} ${rt_name}" >> "$rtTablesFile"
-						nft_file 'sed_temp' "\#${_mark}#d"
+						nft_file 'sed' 'temp' "\#${_mark}#d"
 					fi
-					if ! nft_file 'match_temp' "${nftPrefix}_mark_${_mark}"; then
+					if ! nft_file 'match' 'temp' "${nftPrefix}_mark_${_mark}"; then
 						nft add chain inet "$nftTable" "${nftPrefix}_mark_${_mark}"
 						nft add rule inet "$nftTable" "${nftPrefix}_mark_${_mark} ${nftRuleParams} meta mark set (meta mark & ${fw_maskXor}) | ${_mark}"
 						nft add rule inet "$nftTable" "${nftPrefix}_mark_${_mark} return"
 					fi
-
 					local dscp="$(uci_get "$packageName" 'config' "${iface}_dscp")"
 					if [ "${dscp:-0}" -ge '1' ] && [ "${dscp:-0}" -le '63' ]; then
 						if ! is_split_uplink || ! is_wan6 "$iface"; then
@@ -1336,7 +1377,7 @@ netifd() {
 				remove|uninstall)
 					output 2 "Removing netifd extensions for $iface... "
 					[ "$rt_name" = 'main' ] || sed -i "\#${rt_name}\$#d" "$rtTablesFile" >/dev/null 2>&1
-					nft_file 'sed_netifd' "\#${_mark}#d"
+					nft_file 'sed' 'netifd' "\#${_mark}#d"
 					output_okb
 				;;
 			esac
@@ -1358,7 +1399,7 @@ netifd() {
 	local mark="$(printf '0x%06x' "$uplink_mark")"
 	local priority="$uplink_ip_rules_priority"
 	local tid="$(get_rt_tables_non_pbr_next_id)"
-	local _uplinkMark _uplinkPriority _uplinkTID
+	local _uplinkMark _uplinkPriority _uplinkTableID
 
 	case "$action" in
 		check)
@@ -1399,7 +1440,7 @@ netifd() {
 		;;
 	esac
 
-	nft_file 'netifd_create'
+	nft_file 'create' 'netifd'
 	output 1 "Netifd extensions $action ${target_iface:+on $target_iface }"
 	uci_remove 'network' 'rule' "main_ipv4"  2>/dev/null
 	uci_remove 'network' 'rule6' "main_ipv6" 2>/dev/null
@@ -1409,19 +1450,21 @@ netifd() {
 
 	case "$action" in
 		install)
-			nft_file 'netifd_install'
+			nft_file 'install' 'netifd'
 			if [ -z "$target_iface" ]; then
 				uci_set "$packageName" 'config' 'netifd_enabled' '1'
 			fi
 		;;
 		remove)
 			if [ -z "$target_iface" ]; then
-				nft_file 'netifd_remove'
+				nft_file 'delete' 'netifd'
 				uci_remove "$packageName" 'config' 'netifd_enabled' 2>/dev/null
 			fi
 		;;
 		uninstall)
-			nft_file 'netifd_remove'
+			if [ -z "$target_iface" ]; then
+				nft_file 'delete' 'netifd'
+			fi
 		;;
 	esac
 	uci_commit "$packageName"
@@ -1966,7 +2009,7 @@ interface_routing() {
 					try ip -4 rule replace fwmark "${mark}/${fw_mask}" table "$tid" priority "$priority" || ipv4_error=1
 				fi
 
-				if ! nft_file 'match_temp' "${nftPrefix}_mark_${mark}"; then
+				if ! nft_file 'match' 'temp' "${nftPrefix}_mark_${mark}"; then
 					try nft add chain inet "$nftTable" "${nftPrefix}_mark_${mark}" || ipv4_error=1
 					try nft add rule inet "$nftTable" "${nftPrefix}_mark_${mark} ${nftRuleParams} meta mark set (meta mark & ${fw_maskXor}) | ${mark}" || ipv4_error=1
 					try nft add rule inet "$nftTable" "${nftPrefix}_mark_${mark} return" || ipv4_error=1
@@ -2004,7 +2047,7 @@ interface_routing() {
 					try ip -6 rule replace fwmark "${mark}/${fw_mask}" table "$tid" priority "$priority" || ipv6_error=1
 				fi
 
-				if ! nft_file 'match_temp' "${nftPrefix}_mark_${mark}"; then
+				if ! nft_file 'match' 'temp' "${nftPrefix}_mark_${mark}"; then
 					try nft add chain inet "$nftTable" "${nftPrefix}_mark_${mark}" || ipv6_error=1
 					try nft add rule inet "$nftTable" "${nftPrefix}_mark_${mark} ${nftRuleParams} meta mark set (meta mark & ${fw_maskXor}) | ${mark}" || ipv6_error=1
 					try nft add rule inet "$nftTable" "${nftPrefix}_mark_${mark} return" || ipv6_error=1
@@ -2152,11 +2195,11 @@ process_interface() {
 						config_get listen_port "$iface" 'listen_port'
 						if [ "$disabled" != '1' ] && [ -n "$listen_port" ]; then
 							if [ -n "$uplink_interface4" ]; then
-								ip rule del sport "$listen_port" table "pbr_${uplink_interface4}" >/dev/null 2>&1
-								ip rule add sport "$listen_port" table "pbr_${uplink_interface4}" >/dev/null 2>&1
+								ip rule del sport "$listen_port" table "${ipTablePrefix}_${uplink_interface4}" >/dev/null 2>&1
+								ip rule add sport "$listen_port" table "${ipTablePrefix}_${uplink_interface4}" >/dev/null 2>&1
 								if [ -n "$ipv6_enabled" ]; then
-									ip -6 rule del sport "$listen_port" table "pbr_${uplink_interface4}" >/dev/null 2>&1
-									ip -6 rule add sport "$listen_port" table "pbr_${uplink_interface4}" >/dev/null 2>&1
+									ip -6 rule del sport "$listen_port" table "${ipTablePrefix}_${uplink_interface4}" >/dev/null 2>&1
+									ip -6 rule add sport "$listen_port" table "${ipTablePrefix}_${uplink_interface4}" >/dev/null 2>&1
 								fi
 							fi
 						fi
@@ -2329,7 +2372,7 @@ process_interface() {
 			if is_netifd_interface_default "$iface"; then
 				[ "$verbosity" = '1' ] && dispStatus="$_OKB_" || dispStatus="$__OKB__"
 			fi
-			displayText="${iface}/${dispDev:+$dispDev/}"
+			displayText="${iface}/${dispDev:+$dispDev}"
 			output 2 "Removing routing for '$displayText' "
 			interface_routing 'destroy' "$_tid" "$_mark" "$iface" "" "$dev4" "" "$dev6" "$_priority"
 			if is_netifd_interface "$iface"; then output_okb; else output_ok; fi
@@ -2455,7 +2498,7 @@ user_file_process() {
 }
 
 boot() {
-	nft_file 'delete'
+	nft_file 'delete' 'main'
 	rc_procd start_service 'on_boot' && service_started 'on_boot'
 }
 
@@ -2552,8 +2595,9 @@ start_service() {
 		on_reload|on_start|*)
 			resolver 'store_hash'
 			resolver 'configure'
-			cleanup_rt_tables
-			nft_file 'create'
+			cleanup 'rt_tables'
+			cleanup 'main_chains'
+			nft_file 'create' 'main'
 			output_okn
 			output 1 'Processing interfaces '
 			json_add_array 'gateways'
@@ -2592,7 +2636,7 @@ start_service() {
 				fi
 				output_1_newline
 			fi
-			nft_file 'install'
+			nft_file 'install' 'main'
 			resolver 'compare_hash' && resolver 'restart'
 		;;
 	esac
@@ -2628,7 +2672,7 @@ service_running() { procd_set_config_changed firewall; }
 service_started() {
 	[ -n "$pbrBootFlag" ] && return 0
 	local error warning c
-	if nft_file 'exists'; then
+	if nft_file 'exists' 'main'; then
 		procd_set_config_changed firewall
 		[ -n "$gatewaySummary" ] && output "$serviceName (fw4 nft file mode) started with gateways:\n${gatewaySummary}"
 	else
@@ -2703,27 +2747,26 @@ stop_service() {
 	rm -f "$packageLockFile"
 	[ "$1" = 'quiet' ] && quiet_mode 'on'
 	load_environment 'on_stop'
-	if nft_file 'exists'; then
+	if nft_file 'exists' 'main'; then
 		nft_file_mode=1
 	fi
-	output 'Resetting chains and sets '
-	if nft_file 'delete'; then
+	output 'Resetting routing '
+	if nft_file 'delete' 'main' && \
+		cleanup 'rt_tables' && \
+		cleanup 'main_chains' && \
+		ip route flush cache; then
 		output_okn
 	else
 		output_failn
 	fi
-	output 1 'Resetting interfaces '
-	config_load 'network'
-	config_foreach process_interface 'interface' 'destroy'
-	process_interface 'tor' 'destroy'
-	cleanup_rt_tables
-	output 1 "\n"
-	ip route flush cache
 	unset ifaceMark
 	unset ifaceTableID
+	output 'Resetting resolver '
 	resolver 'store_hash'
 	resolver 'cleanup'
 	resolver 'compare_hash' && resolver 'restart'
+	output_okn
+
 	if [ -n "$enabled" ]; then
 		if [ -n "$nft_file_mode" ]; then
 			output "$serviceName (fw4 nft file mode) stopped "; output_okn;
@@ -2736,7 +2779,7 @@ stop_service() {
 version() { echo "$PKG_VERSION"; }
 
 status_service() {
-	local i dev dev6 wanTID ipv6_enabled
+	local i dev4 dev6 wanTID ipv6_enabled
 
 	load_package_config 'status'
 	load_network 'status'
@@ -2745,24 +2788,31 @@ status_service() {
 	while [ "${1:0:1}" = "-" ]; do param="${1//-/}"; eval "set_$param=1"; shift; done
 	[ -e "/var/${packageName}-support" ] && rm -f "/var/${packageName}-support"
 # shellcheck disable=SC2154
-	status="$serviceName on $PRETTY_NAME."
-	[ -n "$uplink_interface4" ] && status="$status Uplink (IPv4): ${uplink_interface4}/${dev4}/${uplinkGW4:-0.0.0.0}."
-	[ -n "$uplink_interface6" ] && status="$status Uplink (IPv6): ${uplink_interface6}/${dev6}/${uplinkGW6:-::/0}."
+	status="$serviceName on $OPENWRT_RELEASE.\n"
+	if [ -n "$uplink_interface4" ]; then
+		network_get_device dev4 "$uplink_interface4"
+		[ -z "$dev4" ] && network_get_physdev dev4 "$uplink_interface4"
+		status="${status}Uplink (IPv4): ${uplink_interface4}${dev4:+/$dev4}/${uplinkGW4:-0.0.0.0}.\n"
+	fi
+	if [ -n "$uplink_interface6" ]; then
+		network_get_device dev6 "$uplink_interface6"
+		[ -z "$dev6" ] && network_get_physdev dev6 "$uplink_interface6"
+		[ -z "$dev6" ] && dev6="$dev4"
+		status="${status}Uplink (IPv6): ${uplink_interface6}${dev6:+/$dev6}/${uplinkGW6:-::/0}.\n"
+	fi
 
 	echo "$_SEPARATOR_"
 	echo "$packageName - environment"
-	echo "$status"
+	echo -en "$status"
 	echo "$_SEPARATOR_"
 	dnsmasq --version 2>/dev/null | sed '/^$/,$d'
-	if nft_file 'netifd_exists'; then
+	if nft_file 'exists' 'netifd'; then
 		echo "$_SEPARATOR_"
-		echo "$packageName fw4 netifd nft file: $nftNetifdPermFile"
-		sed '1d;2d;' "$nftNetifdPermFile"
+		nft_file 'show' 'netifd'
 	fi
-	if nft_file 'exists'; then
+	if nft_file 'exists' 'main'; then
 		echo "$_SEPARATOR_"
-		echo "$packageName fw4 nft file: $nftPermFile"
-		sed '1d;2d;' "$nftPermFile"
+		nft_file 'show' 'main'
 	fi
 	echo "$_SEPARATOR_"
 	echo "$packageName chains - policies"
