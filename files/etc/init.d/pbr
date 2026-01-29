@@ -1243,6 +1243,18 @@ resolver() {
 					[ -s "$packageDnsmasqFile" ] && resolverStoredHash="$(md5sum "$packageDnsmasqFile" | awk '{ print $1; }')"
 					return 0
 				;;
+				wait)
+					[ -z "$resolverSetSupported" ] && return 1
+					local timeout="${iface:-30}" count=0
+					while [ "$count" -lt "$timeout" ]; do
+						if resolveip localhost >/dev/null 2>&1; then
+							return 0
+						fi
+						sleep 1
+						count=$((count + 1))
+					done
+					return 1
+				;;
 			esac
 		;;
 		unbound.nftset)
@@ -2598,6 +2610,7 @@ start_service() {
 		on_reload|on_start|*)
 			resolver 'store_hash'
 			resolver 'configure'
+#			resolver 'wait'
 			cleanup 'rt_tables'
 			cleanup 'main_chains'
 			cleanup 'sets'
