@@ -47,6 +47,8 @@ readonly _FAIL_='\033[0;31m\xe2\x9c\x97\033[0m'
 readonly __FAIL__='\033[0;31m[\xe2\x9c\x97]\033[0m'
 readonly _ERROR_='\033[0;31mERROR:\033[0m'
 readonly _WARNING_='\033[0;33mWARNING:\033[0m'
+readonly _DOT_='.'
+readonly __DOT__='[w]'
 readonly ip_full='/usr/libexec/ip-full'
 # shellcheck disable=SC2155
 readonly ipTablePrefix="$packageName"
@@ -190,6 +192,7 @@ dnsmasq_ubus=
 nft_fw4_dump=
 loadEnvironmentFlag=
 loadPackageConfigFlag=
+resolverWorkingFlag=
 
 # shellcheck disable=SC1091
 . "${IPKG_INSTROOT}/lib/functions.sh"
@@ -231,6 +234,7 @@ output_okb() { output 1 "$_OKB_"; output 2 "$__OKB__\n"; }
 output_okbn() { output 1 "$_OKB_\n"; output 2 "$__OKB__\n"; }
 output_fail() { output 1 "$_FAIL_"; output 2 "$__FAIL__\n"; }
 output_failn() { output 1 "$_FAIL_\n"; output 2 "$__FAIL__\n"; }
+output_dot() { output 1 "$_DOT_"; output 2 "$__DOT__"; }
 output_error() { output "${_ERROR_} $*!\n"; }
 output_warning() { output "${_WARNING_} $*.\n"; }
 quiet_mode() {
@@ -379,7 +383,7 @@ get_rt_tables_id() { local iface="$1"; grep "${ipTablePrefix}_${iface}\$" "$rtTa
 get_rt_tables_next_id() { echo "$(($(sort -r -n "$rtTablesFile" | grep -o -E -m 1 "^[0-9]+")+1))"; }
 get_rt_tables_non_pbr_next_id() { echo "$(($(grep -v "${ipTablePrefix}_" "$rtTablesFile" | sort -r -n  | grep -o -E -m 1 "^[0-9]+")+1))"; }
 # shellcheck disable=SC2016
-resolveip_to_nftset() { resolveip "$@" | sed -n 'H;${x;s/\n/,/g;s/^,//;p;};d'; }
+resolveip_to_nftset() { resolver 'wait' && resolveip "$@" | sed -n 'H;${x;s/\n/,/g;s/^,//;p;};d'; }
 resolveip_to_nftset4() { resolveip_to_nftset -4 "$@"; }
 resolveip_to_nftset6() { [ -n "$ipv6_enabled" ] && resolveip_to_nftset -6 "$@"; }
 # shellcheck disable=SC2016
@@ -1160,12 +1164,27 @@ resolver() {
 				restart) return 0;;
 				compare_hash) return 0;;
 				store_hash) return 0;;
+				wait)
+					[ -n "$resolverWorkingFlag" ] && return 0
+					local timeout="${iface:-30}" count=0
+					local hostname="$(uci_get 'system' '@system[0]' 'hostname' 'OpenWrt')"
+					while [ "$count" -lt "$timeout" ]; do
+						if resolveip "$hostname" >/dev/null 2>&1; then
+							resolverWorkingFlag='true'
+							return 0
+						fi
+						sleep 1
+						count=$((count + 1))
+					done
+					return 1
+				;;
 			esac
 		;;
 		dnsmasq.nftset)
 			case "$param" in
 				add_resolver_element)
 					[ -n "$resolverSetSupported" ] || return 1
+					[ "$target" = 'src' ] && return 1 # dnsmasq doesn't populate nft sets for local addresses
 					local d
 					for d in $value; do
 						nftset 'add_dnsmasq_element' "$iface" "$target" "$type" "$uid" "$name" "$d"
@@ -1173,6 +1192,7 @@ resolver() {
 				;;
 				create_resolver_set)
 					[ -n "$resolverSetSupported" ] || return 1
+					[ "$target" = 'src' ] && return 1 # dnsmasq doesn't populate nft sets for local addresses
 					nftset 'create_dnsmasq_set' "$iface" "$target" "$type" "$uid" "$name" "$value"
 				;;
 				check_support)
@@ -1244,10 +1264,12 @@ resolver() {
 					return 0
 				;;
 				wait)
-					[ -z "$resolverSetSupported" ] && return 1
+					[ -n "$resolverWorkingFlag" ] && return 0
 					local timeout="${iface:-30}" count=0
+					local hostname="$(uci_get 'system' '@system[0]' 'hostname' 'OpenWrt')"
 					while [ "$count" -lt "$timeout" ]; do
-						if resolveip localhost >/dev/null 2>&1; then
+						if resolveip "$hostname" >/dev/null 2>&1; then
+							resolverWorkingFlag='true'
 							return 0
 						fi
 						sleep 1
@@ -1674,24 +1696,31 @@ policy_routing() {
 				param4="${param4:+$param4 }ether saddr ${negation:+$negation }{ $(inline_set "$value") }"
 				param6="${param6:+$param6 }ether saddr ${negation:+$negation }{ $(inline_set "$value") }"
 			elif is_domain "$first_value_src"; then
-				local inline_set_ipv4='' inline_set_ipv6='' d=''
-				unset src_inline_set_ipv4_empty_flag
-				unset src_inline_set_ipv6_empty_flag
-				for d in $value; do
-					local resolved_ipv4 resolved_ipv6
-					resolved_ipv4="$(resolveip_to_nftset4 "$d")"
-					resolved_ipv6="$(resolveip_to_nftset6 "$d")"
-					if [ -z "${resolved_ipv4}${resolved_ipv6}" ]; then
-						json add error 'errorFailedToResolve' "$d"
-					else
-					[ -n "$resolved_ipv4" ] && inline_set_ipv4="${inline_set_ipv4:+$inline_set_ipv4, }$resolved_ipv4"
-					[ -n "$resolved_ipv6" ] && inline_set_ipv6="${inline_set_ipv6:+$inline_set_ipv6, }$resolved_ipv6"
-					fi
-				done
-				[ -n "$inline_set_ipv4" ] || src_inline_set_ipv4_empty_flag='true'
-				[ -n "$inline_set_ipv6" ] || src_inline_set_ipv6_empty_flag='true'
-				param4="${param4:+$param4 }${nftIPv4Flag} saddr ${negation:+$negation }{ $inline_set_ipv4 }"
-				param6="${param6:+$param6 }${nftIPv6Flag} saddr ${negation:+$negation }{ $inline_set_ipv6 }"
+				local target='src' type='ip'
+				if resolver 'create_resolver_set' "$iface" "$target" "$type" "$uid" "$name" && \
+					resolver 'add_resolver_element' "$iface" "$target" "$type" "$uid" "$name" "$value"; then
+					param4="${param4:+$param4 }${nftIPv4Flag} saddr ${negation:+$negation }@${nftPrefix}_${iface}_4_${target}_${type}_${uid}${nftset_suffix}"
+					param6="${param6:+$param6 }${nftIPv6Flag} saddr ${negation:+$negation }@${nftPrefix}_${iface}_6_${target}_${type}_${uid}${nftset_suffix}"
+				else
+					local inline_set_ipv4='' inline_set_ipv6='' d=''
+					unset src_inline_set_ipv4_empty_flag
+					unset src_inline_set_ipv6_empty_flag
+					for d in $value; do
+						local resolved_ipv4 resolved_ipv6
+						resolved_ipv4="$(resolveip_to_nftset4 "$d")"
+						resolved_ipv6="$(resolveip_to_nftset6 "$d")"
+						if [ -z "${resolved_ipv4}${resolved_ipv6}" ]; then
+							json add error 'errorFailedToResolve' "$d"
+						else
+						[ -n "$resolved_ipv4" ] && inline_set_ipv4="${inline_set_ipv4:+$inline_set_ipv4, }$resolved_ipv4"
+						[ -n "$resolved_ipv6" ] && inline_set_ipv6="${inline_set_ipv6:+$inline_set_ipv6, }$resolved_ipv6"
+						fi
+					done
+					[ -n "$inline_set_ipv4" ] || src_inline_set_ipv4_empty_flag='true'
+					[ -n "$inline_set_ipv6" ] || src_inline_set_ipv6_empty_flag='true'
+					param4="${param4:+$param4 }${nftIPv4Flag} saddr ${negation:+$negation }{ $inline_set_ipv4 }"
+					param6="${param6:+$param6 }${nftIPv6Flag} saddr ${negation:+$negation }{ $inline_set_ipv6 }"
+				fi
 			else
 				param4="${param4:+$param4 }${nftIPv4Flag} saddr ${negation:+$negation }{ $(inline_set "$value") }"
 				param6="${param6:+$param6 }${nftIPv6Flag} saddr ${negation:+$negation }{ $(inline_set "$value") }"
@@ -2610,7 +2639,6 @@ start_service() {
 		on_reload|on_start|*)
 			resolver 'store_hash'
 			resolver 'configure'
-#			resolver 'wait'
 			cleanup 'rt_tables'
 			cleanup 'main_chains'
 			cleanup 'sets'
