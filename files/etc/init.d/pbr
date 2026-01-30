@@ -1033,41 +1033,43 @@ nftset() {
 }
 
 cleanup() {
-	local action="$1" i prio
-	case "$action" in
-		rt_tables)
-			# shellcheck disable=SC2013
-			for i in $(grep -oh "${ipTablePrefix}_.*" "$rtTablesFile"); do
-				! is_netifd_table "$i" && sed -i "/${i}/d" "$rtTablesFile"
-			done
-			sync
-		;;
-		main_table)
-			for prio in $(ip -4 rule show \
-			    | awk -v mask="$fw_mask" '/fwmark/ && $0 ~ mask && /lookup main/ && /suppress_prefixlength 0/ {sub(":", "", $1); print $1}'
-			); do
-			    ip -4 rule del priority "$prio"
-			done
-		;;
-		main_chains)
-			for i in $chainsList dstnat; do
-				i="$(str_to_lower "$i")"
-				nft_call flush chain inet "$nftTable" "${i}"
-			done
-		;;
-		marking_chains)
-			for i in $(get_mark_nft_chains); do
-			#	nft_call flush chain inet "$nftTable" "$i"
-				nft_call delete chain inet "$nftTable" "$i"
-			done
-		;;
-		sets)
-			for i in $(get_nft_sets); do
-			#	nft_call flush set inet "$nftTable" "$i"
-				nft_call delete set inet "$nftTable" "$i"
-			done
-		;;
-	esac
+	local action i prio
+	for action in "$@"; do
+		case "$action" in
+			rt_tables)
+				# shellcheck disable=SC2013
+				for i in $(grep -oh "${ipTablePrefix}_.*" "$rtTablesFile"); do
+					! is_netifd_table "$i" && sed -i "/${i}/d" "$rtTablesFile"
+				done
+				sync
+			;;
+			main_table)
+				for prio in $(ip -4 rule show \
+				    | awk -v mask="$fw_mask" '/fwmark/ && $0 ~ mask && /lookup main/ && /suppress_prefixlength 0/ {sub(":", "", $1); print $1}'
+				); do
+				    ip -4 rule del priority "$prio"
+				done
+			;;
+			main_chains)
+				for i in $chainsList dstnat; do
+					i="$(str_to_lower "$i")"
+					nft_call flush chain inet "$nftTable" "${i}"
+				done
+			;;
+			marking_chains)
+				for i in $(get_mark_nft_chains); do
+				#	nft_call flush chain inet "$nftTable" "$i"
+					nft_call delete chain inet "$nftTable" "$i"
+				done
+			;;
+			sets)
+				for i in $(get_nft_sets); do
+				#	nft_call flush set inet "$nftTable" "$i"
+					nft_call delete set inet "$nftTable" "$i"
+				done
+			;;
+		esac
+	done
 }
 
 json() {
@@ -2639,9 +2641,7 @@ start_service() {
 		on_reload|on_start|*)
 			resolver 'store_hash'
 			resolver 'configure'
-			cleanup 'rt_tables'
-			cleanup 'main_chains'
-			cleanup 'sets'
+			cleanup 'rt_tables' 'main_chains' 'sets'
 			nft_file 'create' 'main'
 			output_okn
 			output 1 'Processing interfaces '
@@ -2797,8 +2797,7 @@ stop_service() {
 	fi
 	output 'Resetting routing '
 	if nft_file 'delete' 'main' && \
-		cleanup 'rt_tables' && \
-		cleanup 'main_chains' && \
+		cleanup 'rt_tables' 'main_chains' && \
 		ip route flush cache; then
 		output_okn
 	else
