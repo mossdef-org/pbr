@@ -1044,10 +1044,58 @@ cleanup() {
 				sync
 			;;
 			main_table)
-				for prio in $(ip -4 rule show \
-				    | awk -v mask="$fw_mask" '/fwmark/ && $0 ~ mask && /lookup main/ && /suppress_prefixlength 0/ {sub(":", "", $1); print $1}'
-				); do
-				    ip -4 rule del priority "$prio"
+				# Get all rules to delete in one pass (format: "priority suppress_prefixlength_value table_name")
+				ip -4 rule show | awk '
+					/lookup[[:space:]]+main[[:space:]]+suppress_prefixlength[[:space:]]+[0-9]+/ { 
+						sub(":", "", $1)
+						match($0, /suppress_prefixlength[[:space:]]+([0-9]+)/, arr)
+						print $1 " " arr[1] " main"
+					}
+					/lookup '"$ipTablePrefix"'_/ { 
+						sub(":", "", $1)
+						match($0, /lookup[[:space:]]+([^[:space:]]+)/, arr)
+						print $1 " 0 " arr[1]
+					}
+				' | while read -r prio len table; do
+					if [ "$table" != "main" ] && is_netifd_table "$table"; then
+						continue  # Skip netifd-managed tables
+					fi
+					if [ "$len" = "0" ]; then
+						# pbr table rule - try priority deletion first
+						ip -4 rule del priority "$prio" 2>/dev/null
+					else
+						# suppress_prefixlength rule - try priority first, then full spec
+						if ! ip -4 rule del priority "$prio" 2>/dev/null; then
+							ip -4 rule del lookup main suppress_prefixlength "$len" priority "$prio" 2>/dev/null || \
+							ip -4 rule del table main suppress_prefixlength "$len" priority "$prio" 2>/dev/null
+						fi
+					fi
+				done
+				# Always attempt IPv6 cleanup regardless of current ipv6_enabled setting
+				# since rules might exist from when IPv6 was previously enabled
+				ip -6 rule show 2>/dev/null | awk '
+					/lookup[[:space:]]+main[[:space:]]+suppress_prefixlength[[:space:]]+[0-9]+/ { 
+						sub(":", "", $1)
+						match($0, /suppress_prefixlength[[:space:]]+([0-9]+)/, arr)
+						print $1 " " arr[1] " main"
+					}
+					/lookup '"$ipTablePrefix"'_/ { 
+						sub(":", "", $1)
+						match($0, /lookup[[:space:]]+([^[:space:]]+)/, arr)
+						print $1 " 0 " arr[1]
+					}
+				' | while read -r prio len table; do
+					if [ "$table" != "main" ] && is_netifd_table "$table"; then
+						continue  # Skip netifd-managed tables
+					fi
+					if [ "$len" = "0" ]; then
+						ip -6 rule del priority "$prio" 2>/dev/null
+					else
+						if ! ip -6 rule del priority "$prio" 2>/dev/null; then
+							ip -6 rule del lookup main suppress_prefixlength "$len" priority "$prio" 2>/dev/null || \
+							ip -6 rule del table main suppress_prefixlength "$len" priority "$prio" 2>/dev/null
+						fi
+					fi
 				done
 			;;
 			main_chains)
@@ -2641,7 +2689,7 @@ start_service() {
 		on_reload|on_start|*)
 			resolver 'store_hash'
 			resolver 'configure'
-			cleanup 'rt_tables' 'main_chains' 'sets'
+			cleanup 'main_table' 'rt_tables' 'main_chains' 'sets'
 			nft_file 'create' 'main'
 			output_okn
 			output 1 'Processing interfaces '
@@ -2797,7 +2845,7 @@ stop_service() {
 	fi
 	output 'Resetting routing '
 	if nft_file 'delete' 'main' && \
-		cleanup 'rt_tables' 'main_chains' && \
+		cleanup 'main_table' 'rt_tables' 'main_chains' && \
 		ip route flush cache; then
 		output_okn
 	else
