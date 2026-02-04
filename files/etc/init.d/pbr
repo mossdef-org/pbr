@@ -2091,7 +2091,7 @@ interface_routing() {
 
 			if [ -n "$dev4" ]; then
 				ipv4_error=0
-				ip -4 rule flush fwmark "${mark}/${fw_mask}" table "$tid" >/dev/null 2>&1
+				ip -4 rule flush table "$tid" >/dev/null 2>&1
 				ip -4 route flush table "$tid" >/dev/null 2>&1
 
 				if [ -n "$gw4" ] || [ -n "$strict_enforcement" ]; then
@@ -2120,7 +2120,7 @@ interface_routing() {
 
 			if [ -n "$ipv6_enabled" ] && [ -n "$dev6" ]; then
 				ipv6_error=0
-				ip -6 rule flush fwmark "${mark}/${fw_mask}" table "$tid" >/dev/null 2>&1
+				ip -6 rule flush table "$tid" >/dev/null 2>&1
 				ip -6 route flush table "$tid" >/dev/null 2>&1
 
 				if { [ -n "$gw6" ] && [ "$gw6" != "::/0" ]; } || [ -n "$strict_enforcement" ]; then
@@ -2195,7 +2195,7 @@ interface_routing() {
 
 			if [ -n "$dev4" ]; then
 				ipv4_error=0
-				ip -4 rule flush table "$tid" >/dev/null 2>&1
+				ip -4 rule flush fwmark "${mark}/${fw_mask}" table "$tid" >/dev/null 2>&1
 				ip -4 route flush table "$tid" >/dev/null 2>&1
 				if [ -n "$gw4" ] || [ -n "$strict_enforcement" ]; then
 					if [ -z "$gw4" ]; then
@@ -2209,7 +2209,7 @@ interface_routing() {
 
 			if [ -n "$ipv6_enabled" ] && [ -n "$dev6" ]; then
 				ipv6_error=0
-				ip -6 rule flush table "$tid" >/dev/null 2>&1
+				ip -6 rule flush fwmark "${mark}/${fw_mask}" table "$tid" >/dev/null 2>&1
 				ip -6 route flush table "$tid" >/dev/null 2>&1
 				if { [ -n "$gw6" ] && [ "$gw6" != "::/0" ]; } || [ -n "$strict_enforcement" ]; then
 					if [ -z "$gw6" ] || [ "$gw6" = "::/0" ]; then
