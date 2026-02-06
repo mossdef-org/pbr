@@ -18,16 +18,20 @@ if type extra_command >/dev/null 2>&1; then
 		Use '-p' option to automatically upload data under PBR paste.ee account
 			WARNING: while paste.ee uploads are unlisted, they are still publicly available
 		List domain names after options to include their lookup in report"
+	extra_command 'support' "Show diagnostic info and mask sensitive data"
 	extra_command 'version' "Show version information"
 else
 # shellcheck disable=SC2034
-	EXTRA_COMMANDS='netifd on_interface_reload status version'
+	EXTRA_COMMANDS='help netifd on_interface_reload status version'
 # shellcheck disable=SC2034
-	EXTRA_HELP="	status	Generates output required to troubleshoot routing issues
-		Use '-d' option for more detailed output
-		Use '-p' option to automatically upload data under PBR paste.ee account
-			WARNING: while paste.ee uploads are unlisted, they are still publicly available
-		List domain names after options to include their lookup in report"
+	EXTRA_HELP="
+\tstatus\tGenerates output required to troubleshoot routing issues
+\t\tUse '-d' option for more detailed output
+\t\tUse '-p' option to automatically upload data under PBR paste.ee account
+\t\t\tWARNING: while paste.ee uploads are unlisted, they are still publicly available
+\t\tList domain names after options to include their lookup in report
+\tsupport\tShow diagnostic info and mask sensitive data
+"
 fi
 
 readonly packageName='pbr'
@@ -2949,6 +2953,111 @@ status_service() {
 		fi
 		echo "$_SEPARATOR_"
 	done
+}
+
+print_config_masked() {
+	local file="$1"
+	[ ! -f "/etc/config/$file" ] && return
+	printf "\n===== %s config =====\n" "$file"
+
+	awk -v sq="'" '
+		BEGIN {
+			masklist = "^(endpoint_host|key|password|preshared_key|private_key|psk|public_key|token|username)$"
+		}
+
+		/^[ \t]*(option|list)[ \t]+/ {
+			orig = $0
+
+			# capture indentation
+			match(orig, /^[ \t]*/)
+			indent = substr(orig, RSTART, RLENGTH)
+
+			# capture kind: "option" or "list"
+			tmp = orig
+			sub(/^[ \t]*/, "", tmp)
+			kind = tmp
+			sub(/[ \t].*$/, "", kind)
+
+			# remove leading indent + kind
+			line = orig
+			sub(/^[ \t]*(option|list)[ \t]+/, "", line)
+
+			# extract key name
+			key = line
+			sub(/[ \t].*$/, "", key)
+
+			# extract value (rest after key)
+			sub(/^[^ \t]+[ \t]+/, "", line)
+			val = line
+			sub(/^[ \t]+/, "", val)
+			sub(/[ \t]+$/, "", val)
+
+			# If this key is in masklist, mask the value (preserve dots and length)
+			if (key ~ masklist) {
+				q = ""
+				if (val ~ "^" sq ".*" sq "$")      { q = sq; val = substr(val, 2, length(val)-2) }
+				else if (val ~ /^".*"$/)           { q = "\""; val = substr(val, 2, length(val)-2) }
+
+				masked = val
+				gsub(/[^.]/, "*", masked)
+
+				if (q != "")
+					print indent kind " " key " " q masked q
+				else
+					print indent kind " " key " " masked
+				next
+			}
+
+			# Otherwise print unchanged for now
+			print orig
+			next
+		}
+
+		{ print }
+	' "/etc/config/$file" \
+	| awk '
+		# Do NOT mask IPs (v4) in allowed_ips (option or list)
+		/^[ \t]*(option|list)[ \t]+allowed_ips[ \t]+/ {
+			print
+			next
+		}
+
+		{
+			line = $0
+
+			# Mask digits inside IPv4-looking tokens, keep dots
+			while (match(line, /([0-9]{1,3}\.){3}[0-9]{1,3}/)) {
+				ip = substr(line, RSTART, RLENGTH)
+				masked = ip
+				gsub(/[0-9]/, "*", masked)
+				line = substr(line, 1, RSTART-1) masked substr(line, RSTART+RLENGTH)
+			}
+
+			print line
+		}
+	' \
+	| sed -E 's/([a-fA-F0-9:]{2,}:){1,7}[a-fA-F0-9]{2,}/***/g'
+}
+
+support() {
+	echo "Setting counters and verbosity for diagnostics..."
+	uci set pbr.config.nft_rule_counter='1'
+	uci set pbr.config.nft_set_counter='1'
+	uci set pbr.config.verbosity='2'
+	uci commit pbr
+
+	for cfg in dhcp firewall network pbr; do
+		print_config_masked "$cfg"
+	done
+
+	printf "\n===== ubus call system board =====\n"
+	ubus call system board
+
+	printf "\n===== /etc/init.d/pbr restart =====\n"
+	/etc/init.d/pbr restart
+
+	printf "\n===== /etc/init.d/pbr status (after restart) =====\n"
+	/etc/init.d/pbr status
 }
 
 # shellcheck disable=SC2120
