@@ -343,7 +343,7 @@ is_mac_address() { echo "$1" | grep -qE '^([0-9A-Fa-f]{2}:){5}([0-9A-Fa-f]{2})$'
 is_mac_address_bad_notation() { echo "$1" | grep -qE '^([0-9A-Fa-f]{2}-){5}([0-9A-Fa-f]{2})$'; }
 is_negated() { [ "${1:0:1}" = '!' ]; }
 is_netifd_table() { grep -q "ip.table.*$1" /etc/config/network; }
-is_netifd_interface() { local iface="$1"; [ -n "$(uci_get 'network' "$iface" 'ip4table')" ]; }
+is_netifd_interface() { local iface="$1"; [ -n "$(uci_get 'network' "$iface" 'ip4table')" ] || [ -n "$(uci_get 'network' "$iface" 'ip6table')" ]; }
 is_oc() { local p; network_get_protocol p "$1"; [ "${p:0:11}" = "openconnect" ]; }
 is_ovpn() { local d; uci_get_device d "$1"; [ "${d:0:3}" = "tun" ] || [ "${d:0:3}" = "tap" ] || [ -f "/sys/devices/virtual/net/${d}/tun_flags" ]; }
 is_ovpn_valid() { local dev_net dev_ovpn; uci_get_device dev_net "$1"; dev_ovpn="$(uci_get 'openvpn' "$1" 'dev')"; [ -n "$dev_net" ] && [ -n "$dev_ovpn" ] && [ "$dev_net" = "$dev_ovpn" ]; }
@@ -1377,9 +1377,13 @@ netifd() {
 						uci_set 'network' "${rt_name}_ipv4" 'priority' "${lan_priority}"
 					fi
 					if [ -n "$ipv6_enabled" ] && [ -n "$netifd_interface_default6" ]; then
+						local ipv6_default_lookup="${ipTablePrefix}_${netifd_interface_default6}"
+						if is_split_uplink && [ "$netifd_interface_default6" = "$uplink_interface6" ]; then
+							ipv6_default_lookup="${ipTablePrefix}_${uplink_interface4}"
+						fi
 						uci_add 'network' 'rule6' "${rt_name}_ipv6"
 						uci_set 'network' "${rt_name}_ipv6" 'in' "${iface}"
-						uci_set 'network' "${rt_name}_ipv6" 'lookup' "${ipTablePrefix}_${netifd_interface_default6}"
+						uci_set 'network' "${rt_name}_ipv6" 'lookup' "$ipv6_default_lookup"
 						uci_set 'network' "${rt_name}_ipv6" 'priority' "${lan_priority}"
 					fi
 					lan_priority="$((lan_priority + 1))"
