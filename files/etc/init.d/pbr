@@ -36,7 +36,7 @@ fi
 
 readonly packageName='pbr'
 readonly PKG_VERSION='dev-test'
-readonly packageCompat='24'
+readonly packageCompat='25'
 readonly serviceName="$packageName $PKG_VERSION"
 readonly packageConfigFile="/etc/config/${packageName}"
 readonly packageDebugFile="/var/run/${packageName}.debug"
@@ -266,7 +266,7 @@ pbr_get_gateway4() {
 }
 pbr_get_gateway6() {
 	local iface="$2" dev="$3" gw
-	is_wan "$iface" && iface="$uplink_interface6"
+	is_uplink4 "$iface" && iface="$uplink_interface6"
 	network_get_gateway6 gw "$iface" true
 	if [ -z "$gw" ] || [ "$gw" = '::/0' ] || [ "$gw" = '::0/0' ] || [ "$gw" = '::' ]; then
 		gw="$(ip -6 a list dev "$dev" 2>/dev/null | grep inet6 | grep 'scope global' | awk '{print $2}')"
@@ -356,7 +356,7 @@ is_supported_protocol(){ grep -qi "^${1:--}" /etc/protocols;}
 is_pptp() { local p; network_get_protocol p "$1"; [ "${p:0:4}" = "pptp" ]; }
 is_softether() { local d; network_get_device d "$1"; [ "${d:0:4}" = "vpn_" ]; }
 is_split_uplink() { [ -n "$ipv6_enabled" ] && [ "$uplink_interface4" != "$uplink_interface6" ]; }
-is_supported_interface() { { is_lan "$1" || is_disabled_interface "$1"; } && return 1; str_contains_word "$supported_interface" "$1" || { ! is_ignored_interface "$1" && { is_wan "$1" || is_wan6 "$1" || is_tunnel "$1"; }; } || is_ignore_target "$1" || is_xray "$1"; }
+is_supported_interface() { { is_lan "$1" || is_disabled_interface "$1"; } && return 1; str_contains_word "$supported_interface" "$1" || { ! is_ignored_interface "$1" && { is_uplink "$1" || is_wan "$1" || is_tunnel "$1"; }; } || is_ignore_target "$1" || is_xray "$1"; }
 is_netbird() { local d; network_get_device d "$1"; [ "${d:0:2}" = "wt" ]; }
 is_tailscale() { local d; network_get_device d "$1"; [ "${d:0:9}" = "tailscale" ]; }
 is_tor() { [ "$(str_to_lower "$1")" = "tor" ]; }
@@ -368,8 +368,12 @@ is_url_file() { [ "$1" != "${1#file://}" ]; }
 is_url_ftp() { [ "$1" != "${1#ftp://}" ]; }
 is_url_http() { [ "$1" != "${1#http://}" ]; }
 is_url_https() { [ "$1" != "${1#https://}" ]; }
-is_wan() { [ "$1" = "$uplink_interface4" ]; }
-is_wan6() { [ -n "$ipv6_enabled" ] && [ "$1" = "$uplink_interface6" ]; }
+is_uplink4() { [ "$1" = "$uplink_interface4" ]; }
+is_uplink6() { [ -n "$ipv6_enabled" ] && [ "$1" = "$uplink_interface6" ]; }
+is_uplink() { is_uplink4 "$1" || is_uplink6 "$1"; }
+is_wan6() { [ -n "$ipv6_enabled" ] || return 1; case "$1" in wan*6|*wan6) return 0;; *) return 1;; esac; }
+is_wan4() { ! is_wan6 "$1" && case "$1" in wan*|*wan) return 0;; *) return 1;; esac; }
+is_wan() { is_wan4 "$1" || is_wan6 "$1"; }
 is_wg() { local p lp; network_get_protocol p "$1"; uci_get_listen_port lp "$1"; [ -z "$lp" ] && [ "${p:0:9}" = "wireguard" ]; }
 is_wg_server() { local p lp; network_get_protocol p "$1"; uci_get_listen_port lp "$1"; [ -n "$lp" ] && [ "${p:0:9}" = "wireguard" ]; }
 is_xray() { [ -n "$(get_xray_traffic_port "$1")" ]; }
@@ -710,7 +714,7 @@ load_environment() {
 		return "$_ret"
 	}
 	local param="$1" validation_result="$2"
-	[ -z "$loadEnvironmentFlag" ] || return 0
+	[ -n "$loadEnvironmentFlag" ] && return 0
 	case "$param" in
 		on_boot|on_start)
 			output 1 "Loading environment ($param) "
@@ -1401,7 +1405,7 @@ netifd() {
 		local splitUplinkSecondIface
 
 		if is_split_uplink; then
-			if is_wan "$iface" || is_wan6 "$iface"; then
+			if is_uplink4 "$iface" || is_uplink6 "$iface"; then
 				if [ -n "$_uplinkMark" ] && [ -n "$_uplinkPriority" ] && [ -n "$_uplinkTableID" ]; then
 					_mark="$_uplinkMark"
 					_priority="$_uplinkPriority"
@@ -1423,7 +1427,7 @@ netifd() {
 			case "$action" in
 				install)
 					output 2 "Setting up netifd extensions for $iface... "
-					if ! is_split_uplink || ! is_wan6 "$iface"; then
+					if ! is_split_uplink || ! is_uplink6 "$iface"; then
 						uci_set 'network' "${iface}" 'ip4table' "${rt_name}"
 						uci_add 'network' 'rule' "${rt_name}_ipv4"
 						uci_set 'network' "${rt_name}_ipv4" 'priority' "${_priority}"
@@ -1431,7 +1435,7 @@ netifd() {
 						uci_set 'network' "${rt_name}_ipv4" 'mark' "${_mark}"
 						uci_set 'network' "${rt_name}_ipv4" 'mask' "${fw_mask}"
 					fi
-					if [ -n "$ipv6_enabled" ] && { ! is_split_uplink || ! is_wan "$iface"; }; then
+					if [ -n "$ipv6_enabled" ] && { ! is_split_uplink || ! is_uplink4 "$iface"; }; then
 						uci_set 'network' "${iface}" 'ip6table' "${rt_name}"
 						uci_add 'network' 'rule6' "${rt_name}_ipv6"
 						uci_set 'network' "${rt_name}_ipv6" 'priority' "${_priority}"
@@ -1439,7 +1443,7 @@ netifd() {
 						uci_set 'network' "${rt_name}_ipv6" 'mark' "${_mark}"
 						uci_set 'network' "${rt_name}_ipv6" 'mask' "${fw_mask}"
 					fi
-					if ! is_split_uplink || ! is_wan6 "$iface"; then
+					if ! is_split_uplink || ! is_uplink6 "$iface"; then
 					[ "$rt_name" = 'main' ] || sed -i "\#${rt_name}\$#d" "$rtTablesFile" >/dev/null 2>&1
 					[ "$rt_name" = 'main' ] || echo "${_tid} ${rt_name}" >> "$rtTablesFile"
 						nft_file 'sed' 'temp' "\#${_mark}#d"
@@ -1451,18 +1455,18 @@ netifd() {
 					fi
 					local dscp="$(uci_get "$packageName" 'config' "${iface}_dscp")"
 					if [ "${dscp:-0}" -ge '1' ] && [ "${dscp:-0}" -le '63' ]; then
-						if ! is_split_uplink || ! is_wan6 "$iface"; then
+						if ! is_split_uplink || ! is_uplink6 "$iface"; then
 							nft add rule inet "$nftTable" "${nftPrefix}_prerouting ${nftIPv4Flag} dscp ${dscp} ${nftRuleParams} goto ${nftPrefix}_mark_${_mark}"
 						fi
-						if [ -n "$ipv6_enabled" ] && { ! is_split_uplink || ! is_wan "$iface"; }; then
+						if [ -n "$ipv6_enabled" ] && { ! is_split_uplink || ! is_uplink4 "$iface"; }; then
 							nft add rule inet "$nftTable" "${nftPrefix}_prerouting ${nftIPv6Flag} dscp ${dscp} ${nftRuleParams} goto ${nftPrefix}_mark_${_mark}"
 						fi
 					fi
 					if [ "$iface" = "$icmp_interface" ]; then
-						if ! is_split_uplink || ! is_wan6 "$iface"; then
+						if ! is_split_uplink || ! is_uplink6 "$iface"; then
 							nft add rule inet "$nftTable" "${nftPrefix}_output ${nftIPv4Flag} protocol icmp ${nftRuleParams} goto ${nftPrefix}_mark_${_mark}"
 						fi
-						if [ -n "$ipv6_enabled" ] && { ! is_split_uplink || ! is_wan "$iface"; }; then
+						if [ -n "$ipv6_enabled" ] && { ! is_split_uplink || ! is_uplink4 "$iface"; }; then
 							nft add rule inet "$nftTable" "${nftPrefix}_output ${nftIPv6Flag} protocol icmp ${nftRuleParams} goto ${nftPrefix}_mark_${_mark}"
 						fi
 					fi
@@ -2353,7 +2357,7 @@ process_interface() {
 
 	network_get_device dev4 "$iface"
 	[ -z "$dev4" ] && network_get_physdev dev4 "$iface"
-	if is_wan "$iface" && [ -n "$uplink_interface6" ]; then
+	if is_uplink4 "$iface" && [ -n "$uplink_interface6" ]; then
 		network_get_device dev6 "$uplink_interface6"
 		[ -z "$dev6" ] && network_get_physdev dev6 "$uplink_interface6"
 	fi
@@ -2366,7 +2370,7 @@ process_interface() {
 	local splitUplinkSecondIface
 
 	if is_split_uplink; then
-		if is_wan "$iface" || is_wan6 "$iface"; then
+		if is_uplink4 "$iface" || is_uplink6 "$iface"; then
 			if [ -n "$_uplinkMark" ] && [ -n "$_uplinkPriority" ] && [ -n "$_uplinkTableID" ]; then
 				_mark="$_uplinkMark"
 				_priority="$_uplinkPriority"
@@ -2404,9 +2408,9 @@ process_interface() {
 			dispGw4="${gw4:-0.0.0.0}"
 			dispGw6="${gw6:-::/0}"
 			if is_split_uplink; then
-				if is_wan "$iface"; then
+				if is_uplink4 "$iface"; then
 					gw6=""; dev6=""
-				elif is_wan6 "$iface"; then
+				elif is_uplink6 "$iface"; then
 					gw4=""; dev4=""
 				fi
 			fi
@@ -2437,9 +2441,9 @@ process_interface() {
 			eval "mark_${iface//-/_}"='$_mark'
 			eval "tid_${iface//-/_}"='$_tid'
 			if is_split_uplink; then
-				if is_wan "$iface"; then
+				if is_uplink4 "$iface"; then
 					dev6=""
-				elif is_wan6 "$iface"; then
+				elif is_uplink6 "$iface"; then
 					dev4=""
 				fi
 			fi
@@ -2462,9 +2466,9 @@ process_interface() {
 			eval "mark_${iface//-/_}"='$_mark'
 			eval "tid_${iface//-/_}"='$_tid'
 			if is_split_uplink; then
-				if is_wan "$iface"; then
+				if is_uplink4 "$iface"; then
 					dev6=""
-				elif is_wan6 "$iface"; then
+				elif is_uplink6 "$iface"; then
 					dev4=""
 				fi
 			fi
@@ -2493,9 +2497,9 @@ process_interface() {
 			dispGw4="${gw4:-0.0.0.0}"
 			dispGw6="${gw6:-::/0}"
 			if is_split_uplink; then
-				if is_wan "$iface"; then
+				if is_uplink4 "$iface"; then
 					gw6=""; dev6=""
-				elif is_wan6 "$iface"; then
+				elif is_uplink6 "$iface"; then
 					gw4=""; dev4=""
 				fi
 			fi
@@ -2522,9 +2526,9 @@ process_interface() {
 			dispGw4="${gw4:-0.0.0.0}"
 			dispGw6="${gw6:-::/0}"
 			if is_split_uplink; then
-				if is_wan "$iface"; then
+				if is_uplink4 "$iface"; then
 					gw6=""; dev6=""
-				elif is_wan6 "$iface"; then
+				elif is_uplink6 "$iface"; then
 					gw4=""; dev4=""
 				fi
 			fi
@@ -2554,7 +2558,7 @@ process_interface() {
 	esac
 
 	if is_split_uplink && [ -z "$splitUplinkSecondIface" ]; then
-		if is_wan "$iface" || is_wan6 "$iface"; then
+		if is_uplink4 "$iface" || is_uplink6 "$iface"; then
 			_uplinkTableID="$_tid"
 		fi
 	fi
