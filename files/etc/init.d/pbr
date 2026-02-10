@@ -372,7 +372,7 @@ is_uplink4() { [ "$1" = "$uplink_interface4" ]; }
 is_uplink6() { [ -n "$ipv6_enabled" ] && [ "$1" = "$uplink_interface6" ]; }
 is_uplink() { is_uplink4 "$1" || is_uplink6 "$1"; }
 is_wan6() { [ -n "$ipv6_enabled" ] || return 1; case "$1" in wan*6|*wan6) return 0;; *) return 1;; esac; }
-is_wan4() { ! is_wan6 "$1" && case "$1" in wan*|*wan) return 0;; *) return 1;; esac; }
+is_wan4() { case "$1" in wan*6|*wan6) return 1;; wan*|*wan) return 0;; *) return 1;; esac; }
 is_wan() { is_wan4 "$1" || is_wan6 "$1"; }
 is_wg() { local p lp; network_get_protocol p "$1"; uci_get_listen_port lp "$1"; [ -z "$lp" ] && [ "${p:0:9}" = "wireguard" ]; }
 is_wg_server() { local p lp; network_get_protocol p "$1"; uci_get_listen_port lp "$1"; [ -n "$lp" ] && [ "${p:0:9}" = "wireguard" ]; }
