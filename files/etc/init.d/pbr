@@ -2283,12 +2283,6 @@ process_interface() {
 				return 0
 			;;
 			create_global_rules)
-				ip -4 rule del lookup 'main' suppress_prefixlength "$prefixlength" priority "$ifacePriority" >/dev/null 2>&1
-				try ip -4 rule add lookup 'main' suppress_prefixlength "$prefixlength" priority "$ifacePriority" || ipv4_error=1
-				if [ -n "$ipv6_enabled" ]; then
-					ip -6 rule del lookup 'main' suppress_prefixlength "$prefixlength" priority "$ifacePriority" >/dev/null 2>&1
-					try ip -6 rule add lookup 'main' suppress_prefixlength "$prefixlength" priority "$ifacePriority" || ipv6_error=1
-				fi
 				_wg_server() {
 					local iface="$1"
 					if is_wg_server "$iface" && ! is_ignored_interface "$iface"; then
@@ -2297,17 +2291,24 @@ process_interface() {
 						config_get listen_port "$iface" 'listen_port'
 						if [ "$disabled" != '1' ] && [ -n "$listen_port" ]; then
 							if [ -n "$uplink_interface4" ]; then
-								ip rule del sport "$listen_port" table "${ipTablePrefix}_${uplink_interface4}" >/dev/null 2>&1
-								ip rule add sport "$listen_port" table "${ipTablePrefix}_${uplink_interface4}" >/dev/null 2>&1
+								ip rule del sport "$listen_port" table "${ipTablePrefix}_${uplink_interface4}" priority "$ifacePriority" >/dev/null 2>&1
+								ip rule add sport "$listen_port" table "${ipTablePrefix}_${uplink_interface4}" priority "$ifacePriority" >/dev/null 2>&1
 								if [ -n "$ipv6_enabled" ]; then
-									ip -6 rule del sport "$listen_port" table "${ipTablePrefix}_${uplink_interface4}" >/dev/null 2>&1
-									ip -6 rule add sport "$listen_port" table "${ipTablePrefix}_${uplink_interface4}" >/dev/null 2>&1
+									ip -6 rule del sport "$listen_port" table "${ipTablePrefix}_${uplink_interface4}" priority "$ifacePriority" >/dev/null 2>&1
+									ip -6 rule add sport "$listen_port" table "${ipTablePrefix}_${uplink_interface4}" priority "$ifacePriority">/dev/null 2>&1
 								fi
 							fi
 						fi
 					fi
 				}
 				config_foreach _wg_server 'interface'
+
+				ip -4 rule del lookup 'main' suppress_prefixlength "$prefixlength" >/dev/null 2>&1
+				try ip -4 rule add lookup 'main' suppress_prefixlength "$prefixlength" || ipv4_error=1
+				if [ -n "$ipv6_enabled" ]; then
+					ip -6 rule del lookup 'main' suppress_prefixlength "$prefixlength" >/dev/null 2>&1
+					try ip -6 rule add lookup 'main' suppress_prefixlength "$prefixlength" || ipv6_error=1
+				fi
 				return 0
 			;;
 		esac
