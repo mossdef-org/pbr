@@ -445,6 +445,115 @@ check_dnsmasq_nftset() {
 	[ -z "$dnsmasq_features" ] && dnsmasq_features="$(dnsmasq --version | grep -m1 'Compile time options:' | cut -d: -f2) "
 	[ "${dnsmasq_features#* nftset }" != "$dnsmasq_features" ]
 }
+
+# mwan4 detection and integration functions
+mwan4_is_installed() {
+	[ -x /etc/init.d/mwan4 ] && [ -f /etc/config/mwan4 ]
+}
+
+mwan4_is_running() {
+	mwan4_is_installed && /etc/init.d/mwan4 running >/dev/null 2>&1
+}
+
+mwan4_get_iface_list() {
+	# Get list of enabled mwan4 interfaces from UCI config
+	# Output: space-separated list of interface names
+	local iface_list=""
+	mwan4_is_installed || return 1
+
+	# Use uci to get all interface sections where enabled=1
+	for iface in $(uci -q show mwan4 | grep "=interface$" | cut -d. -f2 | cut -d= -f1); do
+		if [ "$(uci -q get mwan4."$iface".enabled)" = "1" ]; then
+			iface_list="${iface_list}${iface} "
+		fi
+	done
+
+	echo "${iface_list% }"
+}
+
+mwan4_get_policy_list() {
+	# Get list of mwan4 policies from UCI config
+	# Output: space-separated list of policy names
+	local policy_list=""
+	mwan4_is_installed || return 1
+
+	# Use uci to get all policy sections
+	for policy in $(uci -q show mwan4 | grep "=policy$" | cut -d. -f2 | cut -d= -f1); do
+		policy_list="${policy_list}${policy} "
+	done
+
+	echo "${policy_list% }"
+}
+
+mwan4_get_iface_mark_chain() {
+	# Get the nftables marking chain name for a specific mwan4 interface
+	# $1 = interface name
+	# Output: chain name (e.g., "mwan4_iface_in_wan")
+	local iface="$1"
+	[ -z "$iface" ] && return 1
+	mwan4_is_running || return 1
+
+	# Check if the chain exists in nftables
+	if "$nft" list chain inet fw4 "mwan4_iface_in_${iface}" >/dev/null 2>&1; then
+		echo "mwan4_iface_in_${iface}"
+		return 0
+	fi
+	return 1
+}
+
+mwan4_get_iface_nft_sets() {
+	# Get the nftables set names used by a specific mwan4 interface
+	# $1 = interface name
+	# Output: space-separated list of set names
+	local iface="$1"
+	local family=""
+	local sets=""
+	[ -z "$iface" ] && return 1
+	mwan4_is_installed || return 1
+
+	# Get the family (ipv4/ipv6) for the interface
+	family=$(uci -q get mwan4."$iface".family)
+	[ -z "$family" ] && family="ipv4"
+
+	# The sets used by mwan4 per interface family
+	for settype in connected custom dynamic; do
+		if "$nft" list set inet fw4 "mwan4_${settype}_${family}" >/dev/null 2>&1; then
+			sets="${sets}mwan4_${settype}_${family} "
+		fi
+	done
+
+	echo "${sets% }"
+}
+
+mwan4_get_policy_chain() {
+	# Get the nftables policy chain name for a specific mwan4 policy
+	# $1 = policy name
+	# $2 = family (ipv4 or ipv6, defaults to ipv4)
+	# Output: chain name (e.g., "mwan4_policy_balanced_ipv4")
+	local policy="$1"
+	local family="${2:-ipv4}"
+	[ -z "$policy" ] && return 1
+	mwan4_is_running || return 1
+
+	# Check if the chain exists in nftables
+	if "$nft" list chain inet fw4 "mwan4_policy_${policy}_${family}" >/dev/null 2>&1; then
+		echo "mwan4_policy_${policy}_${family}"
+		return 0
+	fi
+	return 1
+}
+
+mwan4_get_mmx_mask() {
+	# Get the MMX (Multi-WAN Mark) mask used by mwan4
+	# Output: hex mask value (e.g., "0x3F00")
+	mwan4_is_installed || return 1
+
+	local mask
+	mask=$(uci -q get mwan4.globals.mmx_mask)
+	[ -z "$mask" ] && mask="0x3F00"  # Default mask
+	echo "$mask"
+}
+
 print_json_bool() { json_init; json_add_boolean "$1" "$2"; json_dump; json_cleanup; }
 print_json_string() { json_init; json_add_string "$1" "$2"; json_dump; json_cleanup; }
 try() {
