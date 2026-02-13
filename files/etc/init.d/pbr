@@ -1392,8 +1392,8 @@ resolver() {
 					else
 						config_foreach _dnsmasq_instance_config 'dnsmasq' 'cleanup'
 						for i in $resolver_instance; do
-							_dnsmasq_instance_config "@dnsmasq[$i]" \
-							|| _dnsmasq_instance_config "$i"
+							_dnsmasq_instance_config "@dnsmasq[$i]" 'setup' \
+							|| _dnsmasq_instance_config "$i" 'setup'
 						done
 					fi
 				;;
