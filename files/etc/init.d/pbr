@@ -340,12 +340,12 @@ is_netifd_interface() { local iface="$1"; [ -n "$(uci_get 'network' "$iface" 'ip
 is_oc() { local p; network_get_protocol p "$1"; [ "${p:0:11}" = "openconnect" ]; }
 is_ovpn() { local d; uci_get_device d "$1"; [ "${d:0:3}" = "tun" ] || [ "${d:0:3}" = "tap" ] || [ -f "/sys/devices/virtual/net/${d}/tun_flags" ]; }
 is_ovpn_valid() { local dev_net dev_ovpn; uci_get_device dev_net "$1"; dev_ovpn="$(uci_get 'openvpn' "$1" 'dev')"; [ -n "$dev_net" ] && [ -n "$dev_ovpn" ] && [ "$dev_net" = "$dev_ovpn" ]; }
-is_phys_dev(){ [ "${1:0:1}" = "@" ] && [ -L "/sys/class/net/${1#@}" ]; }
+is_phys_dev() { [ "${1:0:1}" = "@" ] && [ -L "/sys/class/net/${1#@}" ]; }
 is_present() { command -v "$1" >/dev/null 2>&1; }
 is_service_running() { is_service_running_nft; }
 is_service_running_nft() { [ -x "$nft" ] && [ -n "$(get_mark_nft_chains)" ]; }
 is_supported_iface_dev() { local n dev; for n in $ifacesSupported; do network_get_device dev "$n"; [ "$1" = "$dev" ] && return 0; done; return 1; }
-is_supported_protocol(){ grep -qi "^${1:--}" /etc/protocols;}
+is_supported_protocol() { grep -qi "^${1:--}" /etc/protocols;}
 is_pptp() { local p; network_get_protocol p "$1"; [ "${p:0:4}" = "pptp" ]; }
 is_softether() { local d; network_get_device d "$1"; [ "${d:0:4}" = "vpn_" ]; }
 is_split_uplink() { [ -n "$ipv6_enabled" ] && [ "$uplink_interface4" != "$uplink_interface6" ]; }
@@ -388,9 +388,9 @@ resolveip_to_nftset() { resolver 'wait' && resolveip "$@" | sed -n 'H;${x;s/\n/,
 resolveip_to_nftset4() { resolveip_to_nftset -4 "$@"; }
 resolveip_to_nftset6() { [ -n "$ipv6_enabled" ] && resolveip_to_nftset -6 "$@"; }
 # shellcheck disable=SC2016
-ipv4_leases_to_nftset(){ [ -s '/tmp/dhcp.leases' ] && awk -v arg="$1" 'BEGIN{fs=""};$0~arg{printf fs$3;fs=","}' /tmp/dhcp.leases;}
+ipv4_leases_to_nftset() { [ -s '/tmp/dhcp.leases' ] && awk -v arg="$1" 'BEGIN{fs=""};$0~arg{printf fs$3;fs=","}' /tmp/dhcp.leases;}
 # shellcheck disable=SC2016
-ipv6_leases_to_nftset(){ [ -s '/tmp/hosts/odhcpd' ] && awk -v arg="$1" 'BEGIN{fs=""};$0~arg{printf fs$1;fs=","}' /tmp/hosts/odhcpd;}
+ipv6_leases_to_nftset() { [ -s '/tmp/hosts/odhcpd' ] && awk -v arg="$1" 'BEGIN{fs=""};$0~arg{printf fs$1;fs=","}' /tmp/hosts/odhcpd;}
 # shellcheck disable=SC3037
 ports_to_nftset() { echo -en "$1"; }
 get_mark_nft_chains() { "$nft" list table inet "$nftTable" 2>/dev/null | grep chain | grep "${nftPrefix}_mark_" | awk '{ print $2 }'; }
@@ -1288,14 +1288,17 @@ json() {
 
 resolver() {
 	_dnsmasq_instance_get_confdir() {
-		local cfg_file
+		local cfg cfg_file
+		cfg="$(uci -q show "dhcp.${1}" | awk -F'[.=]' 'NR==1{print $2}')"
 		[ -z "$dnsmasq_ubus" ] && dnsmasq_ubus="$(ubus call service list '{"name":"dnsmasq"}')"
-		cfg_file="$(echo "$dnsmasq_ubus" | jsonfilter -e "@.dnsmasq.instances.${1}.command" \
+		cfg_file="$(echo "$dnsmasq_ubus" | jsonfilter -e "@.dnsmasq.instances.${cfg}.command" \
 			| awk '{gsub(/\\\//,"/");gsub(/[][",]/,"");for(i=1;i<=NF;i++)if($i=="-C"){print $(i+1);exit}}')"
 		awk -F= '/^conf-dir=/{print $2; exit}' "$cfg_file"
 	}
 	_dnsmasq_instance_config() {
 		local cfg="$1" param="$2" confdir
+		[ -s "/etc/config/dhcp" ] || return 0
+		[ -n "$(uci_get dhcp "$cfg")" ] || return 1
 		case "$param" in
 			cleanup)
 				# clean up all dnsmasq configs
