@@ -1171,8 +1171,9 @@ cleanup() {
 				local prio_min prio_max prio table line
 				# max interfaces = fw_mask / uplink_mark (e.g. 0x00ff0000/0x00010000 = 255)
 				local max_ifaces="$((fw_mask / uplink_mark))"
-				prio_max="$((uplink_ip_rules_priority + 1))"
+				prio_max="$((uplink_ip_rules_priority))"
 				prio_min="$((uplink_ip_rules_priority - max_ifaces))"
+				[ "$prio_min" -lt 1 ] && prio_min="1"
 				ip -4 rule show | while IFS= read -r line; do
 					prio="${line%%:*}"
 					[ "$prio" -ge "$prio_min" ] 2>/dev/null && [ "$prio" -le "$prio_max" ] 2>/dev/null || continue
@@ -2394,25 +2395,26 @@ process_interface() {
 						config_get listen_port "$iface" 'listen_port'
 						if [ "$disabled" != '1' ] && [ -n "$listen_port" ]; then
 							if [ -n "$uplink_interface4" ]; then
-								ip rule del sport "$listen_port" table "${ipTablePrefix}_${uplink_interface4}" priority "$ifacePriority" >/dev/null 2>&1
+								#ip rule del sport "$listen_port" table "${ipTablePrefix}_${uplink_interface4}" priority "$ifacePriority" >/dev/null 2>&1
 								ip rule add sport "$listen_port" table "${ipTablePrefix}_${uplink_interface4}" priority "$ifacePriority" >/dev/null 2>&1
 								if [ -n "$ipv6_enabled" ]; then
-									ip -6 rule del sport "$listen_port" table "${ipTablePrefix}_${uplink_interface4}" priority "$ifacePriority" >/dev/null 2>&1
-									ip -6 rule add sport "$listen_port" table "${ipTablePrefix}_${uplink_interface4}" priority "$ifacePriority">/dev/null 2>&1
+									#ip -6 rule del sport "$listen_port" table "${ipTablePrefix}_${uplink_interface4}" priority "$ifacePriority" >/dev/null 2>&1
+									ip -6 rule add sport "$listen_port" table "${ipTablePrefix}_${uplink_interface4}" priority "$ifacePriority" >/dev/null 2>&1
 								fi
+								ifacePriority="$((ifacePriority - 1))"
 							fi
 						fi
 					fi
 				}
 				config_foreach _wg_server 'interface'
 
-				ip -4 rule del priority "$((uplink_ip_rules_priority + 1))" >/dev/null 2>&1
-				ip -4 rule del lookup 'main' suppress_prefixlength "$prefixlength" >/dev/null 2>&1
-				try ip -4 rule add lookup 'main' suppress_prefixlength "$prefixlength" pref "$((uplink_ip_rules_priority + 1))" || ipv4_error=1
+				#ip -4 rule del priority "$ifacePriority" >/dev/null 2>&1
+				#ip -4 rule del lookup 'main' suppress_prefixlength "$prefixlength" >/dev/null 2>&1
+				try ip -4 rule add lookup 'main' suppress_prefixlength "$prefixlength" priority "$ifacePriority" || ipv4_error=1
 				if [ -n "$ipv6_enabled" ]; then
-					ip -6 rule del priority "$((uplink_ip_rules_priority + 1))" >/dev/null 2>&1
-					ip -6 rule del lookup 'main' suppress_prefixlength "$prefixlength" >/dev/null 2>&1
-					try ip -6 rule add lookup 'main' suppress_prefixlength "$prefixlength" pref "$((uplink_ip_rules_priority + 1))" || ipv6_error=1
+					#ip -6 rule del priority "$ifacePriority" >/dev/null 2>&1
+					#ip -6 rule del lookup 'main' suppress_prefixlength "$prefixlength" >/dev/null 2>&1
+					try ip -6 rule add lookup 'main' suppress_prefixlength "$prefixlength" priority "$ifacePriority" || ipv6_error=1
 				fi
 				return 0
 			;;
@@ -3180,7 +3182,7 @@ load_validate_config() {
 		'resolver_instance:list(or(integer, string)):*' \
 		'verbosity:range(0,2):2' \
 		'uplink_mark:regex("[A-Fa-f0-9]{8}"):00010000' \
-		'uplink_ip_rules_priority:range(1001,32765):30000' \
+		'uplink_ip_rules_priority:range(99,32765):30000' \
 		'fw_mask:regex("[A-Fa-f0-9]{8}"):00ff0000' \
 		'icmp_interface:or("", tor, uci("network", "@interface"))' \
 		'ignored_interface:list(or(tor, uci("network", "@interface")))' \
