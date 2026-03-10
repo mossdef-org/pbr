@@ -2788,10 +2788,10 @@ start_service() {
 	local i k
 
 	load_package_config "$param"
-	stop_forward
 	[ "$param" = 'on_boot' ] && pbrBootFlag=1 && return 0
 	json init
 	load_environment "${param:-on_start}" "$(load_validate_config)" || return 1
+	stop_forward
 
 	output "Processing environment (${param:-on_start}) "
 	if ! is_wan_up "$param"; then
