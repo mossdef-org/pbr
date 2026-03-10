@@ -2182,9 +2182,14 @@ policy_process() {
 					if str_contains "$filter_group_src_addr" 'ipv6' && str_contains "$filter_group_dest_addr" 'ipv4'; then
 							continue
 					fi
-					policy_routing "$name" "$interface" "$filtered_value_src_addr" "$src_port" "$filtered_value_dest_addr" "$dest_port" "$proto" "$chain" "$uid"
-					processed_value_src_addr="${processed_value_src_addr:+${processed_value_src_addr} }$filtered_value_src_addr"
-					processed_value_dest_addr="${processed_value_dest_addr:+${processed_value_dest_addr} }$filtered_value_dest_addr"
+					if [ -n "${filtered_value_src_addr}${filtered_value_dest_addr}${src_port}${dest_port}${proto}" ]; then
+						policy_routing "$name" "$interface" "$filtered_value_src_addr" "$src_port" "$filtered_value_dest_addr" "$dest_port" "$proto" "$chain" "$uid"
+						processed_value_src_addr="${processed_value_src_addr:+${processed_value_src_addr} }$filtered_value_src_addr"
+						processed_value_dest_addr="${processed_value_dest_addr:+${processed_value_dest_addr} }$filtered_value_dest_addr"
+					else
+						json add error 'errorPolicyNoSrcDest' "$name"
+						output_fail; return 1;
+					fi
 				fi
 			done
 		fi
