@@ -3082,12 +3082,14 @@ stop_service() {
 
 restart() {
 	load_package_config 'on_restart'
+	trap 'enable_forward' EXIT
 	stop_forward
 	stop
 	# it takes time before routes are cleaned up, if started immediately a leak can occur
 	[ -n "$strict_enforcement" ] && sleep 2
 	start
 	enable_forward
+	trap - EXIT
 }
 
 version() { echo "$PKG_VERSION"; }
