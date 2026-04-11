@@ -979,7 +979,7 @@ nft_file() {
 			done
 			echo "" >> "$nftTempFile"
 			# Add jump rules from fw4 chains to pbr chains
-			echo "add rule inet $nftTable dstnat jump ${nftPrefix}_dstnat" >> "$nftTempFile"
+			echo "insert rule inet $nftTable dstnat jump ${nftPrefix}_dstnat" >> "$nftTempFile"
 			echo "add rule inet $nftTable mangle_prerouting jump ${nftPrefix}_prerouting" >> "$nftTempFile"
 			echo "add rule inet $nftTable mangle_output jump ${nftPrefix}_output" >> "$nftTempFile"
 			echo "add rule inet $nftTable mangle_forward jump ${nftPrefix}_forward" >> "$nftTempFile"
