@@ -271,7 +271,15 @@ pbr_get_gateway6() {
 	is_uplink4 "$iface" && iface="$uplink_interface6"
 	network_get_gateway6 gw "$iface" true
 	if [ -z "$gw" ] || [ "$gw" = '::/0' ] || [ "$gw" = '::0/0' ] || [ "$gw" = '::' ]; then
-		gw="$(ip -6 a list dev "$dev" 2>/dev/null | grep inet6 | grep 'scope global' | awk '{print $2}')"
+		# Prefer the actual default-route nexthop on this device (usually fe80::).
+		gw="$(ip -6 route show dev "$dev" 2>/dev/null | awk '$1=="default" {print $3; exit}')"
+		# Fall back to a link-local neighbor advertised as router.
+		[ -z "$gw" ] && gw="$(ip -6 neigh show dev "$dev" 2>/dev/null | awk '/^fe80:.*router/ {print $1; exit}')"
+		# Last resort: first global address on the device, with prefix length stripped.
+		# The previous `awk '{print $2}'` (no line limit, prefix kept) produced a
+		# multi-line string like "2804::a/64\n2804::b/128" which turned `ip -6 route
+		# replace default via "$gw6" ...` into invalid syntax and failed every run.
+		[ -z "$gw" ] && gw="$(ip -6 a list dev "$dev" 2>/dev/null | awk '/inet6 .* scope global/ {sub(/\/.*/,"",$2); print $2; exit}')"
 	fi
 	eval "$1"='$gw'
 }
