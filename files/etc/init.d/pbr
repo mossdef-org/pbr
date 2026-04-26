@@ -259,10 +259,16 @@ pbr_find_iface() {
 }
 pbr_get_gateway4() {
 	local iface="$2" dev="$3" gw
+	is_uplink6 "$iface" && iface="$uplink_interface4"
 	network_get_gateway gw "$iface" true
 	if [ -z "$gw" ] || [ "$gw" = '0.0.0.0' ]; then
-#		gw="$(ubus call "network.interface.${iface}" status | jsonfilter -e "@.route[0].nexthop")"
-		gw="$(ip -4 a list dev "$dev" 2>/dev/null | grep inet | awk '{print $2}' | awk -F "/" '{print $1}')"
+		gw="$(ip -4 route show dev "$dev" table all 2>/dev/null | awk '$1=="default" {for (i=1; i<NF; i++) if ($i=="via") {print $(i+1); exit}}')"    # use table all in case of netifd where default routes are not present in main table
+		# Fall back in case interfaces do not have a default route
+		[ -z "$gw" ] && gw="$(ip -4 route show dev "$dev" table all 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i=="via") {print $(i+1); exit}}')"
+		# Fall back to ip route get using "table all" might already work
+		[ -z "$gw" ] && gw="$(ip -4 route get 1.1.1.1 oif "$dev" 2>/dev/null | awk '/via/ {print $3; exit}')"
+		# Raise error if no gw and not point-to-point
+		{ [ -z "$gw" ] && ! ip address show dev "$dev" 2>/dev/null | grep -q "POINTOPOINT"; } && json add error 'errorInterfaceRoutingUnknownGateway' "$dev"
 	fi
 	eval "$1"='$gw'
 }
@@ -271,7 +277,14 @@ pbr_get_gateway6() {
 	is_uplink4 "$iface" && iface="$uplink_interface6"
 	network_get_gateway6 gw "$iface" true
 	if [ -z "$gw" ] || [ "$gw" = '::/0' ] || [ "$gw" = '::0/0' ] || [ "$gw" = '::' ]; then
-		gw="$(ip -6 a list dev "$dev" 2>/dev/null | grep inet6 | grep 'scope global' | awk '{print $2}')"
+		gw="$(ip -6 route show dev "$dev" table all 2>/dev/null | awk '$1=="default" {for (i=1; i<NF; i++) if ($i=="via") {print $(i+1); exit}}')"    # use table all in case of netifd where default routes are not present in main table
+		# Fall back in case interfaces do not have a default route
+		[ -z "$gw" ] && gw="$(ip -6 route show dev "$dev" table all 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i=="via") {print $(i+1); exit}}')"
+		# Fall back to using ip -6 get route is not working as source routing is used which needs "from"
+		# Fall back to a link-local neighbor advertised as router.
+		[ -z "$gw" ] && gw="$(ip -6 neigh show dev "$dev" 2>/dev/null | awk '/^fe80:.*router/ {print $1; exit}')"
+		# Raise error if no gw and not point-to-point link
+		{ [ -z "$gw" ] && ! ip address show dev "$dev" 2>/dev/null | grep -q "POINTOPOINT"; } && json add error 'errorInterfaceRoutingUnknownGateway' "$dev"
 	fi
 	eval "$1"='$gw'
 }
@@ -641,6 +654,7 @@ get_text() {
 		errorDefaultFw4ChainMissing) printf "Default fw4 chain '%s' is missing" "$1";;
 		errorRequiredBinaryMissing) printf "Required binary '%s' is missing" "$1";;
 		errorInterfaceRoutingUnknownDevType) printf "Unknown IPv6 Link type for device '%s'" "$1";;
+		errorInterfaceRoutingUnknownGateway) printf "Unknown Gateway for device '%s'" "$1";;
 		errorUplinkDown) printf "Uplink/WAN interface is still down, increase value of 'procd_boot_trigger_delay' option";;
 		errorMktempFileCreate) printf "Failed to create temporary file with mktemp mask: '%s'" "$1";;
 		errorSummary) printf "Errors encountered, please check %s" "$1";;
@@ -2281,13 +2295,16 @@ interface_routing() {
 				ip -4 route flush table "$tid" >/dev/null 2>&1
 
 				if [ -n "$gw4" ] || [ -n "$strict_enforcement" ]; then
-					if [ -z "$gw4" ] && ip address show dev "$dev4" 2>/dev/null | grep -q "POINTOPOINT"; then
-						try ip -4 route replace default dev "$dev4" table "$tid" || ipv4_error=1
-					elif [ -z "$gw4" ]; then
-						try ip -4 route replace unreachable default table "$tid" || ipv4_error=1
-					else
+					if [ -n "$gw4" ]; then 
 						try ip -4 route replace default via "$gw4" dev "$dev4" table "$tid" || ipv4_error=1
+					elif ip address show dev "$dev4" 2>/dev/null | grep -q "POINTOPOINT"; then     # might need to set this rule as first to prevent rogue gateway detection for point-to-point links
+						try ip -4 route replace default dev "$dev4" table "$tid" || ipv4_error=1
+					else
+						try ip -4 route replace unreachable default table "$tid" || ipv4_error=1
 					fi
+					try ip -4 rule replace fwmark "${mark}/${fw_mask}" table "$tid" priority "$priority" || ipv4_error=1
+				elif ip address show dev "$dev4" 2>/dev/null | grep -q "POINTOPOINT"; then
+					try ip -4 route replace default dev "$dev4" table "$tid" || ipv4_error=1
 					try ip -4 rule replace fwmark "${mark}/${fw_mask}" table "$tid" priority "$priority" || ipv4_error=1
 				fi
 			elif [ -n "$strict_enforcement" ] && ! { is_split_uplink && [ "$iface" = "$uplink_interface6" ]; }; then
@@ -2303,23 +2320,17 @@ interface_routing() {
 				ip -6 rule flush table "$tid" >/dev/null 2>&1
 				ip -6 route flush table "$tid" >/dev/null 2>&1
 
-				if { [ -n "$gw6" ] && [ "$gw6" != "::/0" ]; } || [ -n "$strict_enforcement" ]; then
-					if { [ -z "$gw6" ] || [ "$gw6" = "::/0" ]; } && ip address show dev "$dev6" 2>/dev/null | grep -q "POINTOPOINT"; then
+				if [ -n "$gw6" ] || [ -n "$strict_enforcement" ]; then
+					if [ -n "$gw6" ]; then 
+						try ip -6 route replace default via "$gw6" dev "$dev6" table "$tid" metric "$uplink_interface6_metric" || ipv6_error=1
+					elif ip address show dev "$dev6" 2>/dev/null | grep -q "POINTOPOINT"; then     # might need to set this rule as first to prevent rogue gateway detection for point-to-point links
 						try ip -6 route replace default dev "$dev6" table "$tid" metric "$uplink_interface6_metric" || ipv6_error=1
-					elif [ -z "$gw6" ] || [ "$gw6" = "::/0" ]; then
-						try ip -6 route replace unreachable default table "$tid" || ipv6_error=1
-					elif ip -6 route list table main | grep -q " dev $dev6 "; then
-						if ip -6 address show dev "$dev6" | grep -q "BROADCAST"; then
-							try ip -6 route replace default via "$gw6" dev "$dev6" table "$tid" metric "$uplink_interface6_metric" || ipv6_error=1
-						elif ip -6 address show dev "$dev6" | grep -q "POINTOPOINT"; then
-							try ip -6 route replace default dev "$dev6" table "$tid" metric "$uplink_interface6_metric" || ipv6_error=1
-						else
-							json add error 'errorInterfaceRoutingUnknownDevType' "$dev6"
-						fi
 					else
-						try ip -6 route replace "$(ip -6 -o a show "$dev6" | awk '{print $4}')" dev "$dev6" table "$tid" || ipv6_error=1
-						try ip -6 route replace default dev "$dev6" table "$tid" || ipv6_error=1
+						try ip -6 route replace unreachable default table "$tid" || ipv6_error=1
 					fi
+					try ip -6 rule replace fwmark "${mark}/${fw_mask}" table "$tid" priority "$priority" || ipv6_error=1
+				elif ip address show dev "$dev6" 2>/dev/null | grep -q "POINTOPOINT"; then
+					try ip -6 route replace default dev "$dev6" table "$tid" metric "$uplink_interface6_metric" || ipv6_error=1
 					try ip -6 rule replace fwmark "${mark}/${fw_mask}" table "$tid" priority "$priority" || ipv6_error=1
 				fi
 			elif [ -n "$ipv6_enabled" ] && [ -n "$strict_enforcement" ] && ! { is_split_uplink && [ "$iface" = "$uplink_interface4" ]; }; then
@@ -2369,14 +2380,18 @@ interface_routing() {
 				ipv4_error=0
 				ip -4 rule flush fwmark "${mark}/${fw_mask}" table "$tid" >/dev/null 2>&1
 				ip -4 route flush table "$tid" >/dev/null 2>&1
+
 				if [ -n "$gw4" ] || [ -n "$strict_enforcement" ]; then
-					if [ -z "$gw4" ] && ip address show dev "$dev4" 2>/dev/null | grep -q "POINTOPOINT"; then
-						try ip -4 route replace default dev "$dev4" table "$tid" || ipv4_error=1
-					elif [ -z "$gw4" ]; then
-						try ip -4 route replace unreachable default table "$tid" || ipv4_error=1
-					else
+					if [ -n "$gw4" ]; then 
 						try ip -4 route replace default via "$gw4" dev "$dev4" table "$tid" || ipv4_error=1
+					elif ip address show dev "$dev4" 2>/dev/null | grep -q "POINTOPOINT"; then     # might need to set this rule as first to prevent rogue gateway detection for point-to-point links
+						try ip -4 route replace default dev "$dev4" table "$tid" || ipv4_error=1
+					else
+						try ip -4 route replace unreachable default table "$tid" || ipv4_error=1
 					fi
+					try ip -4 rule replace fwmark "${mark}/${fw_mask}" table "$tid" priority "$priority" || ipv4_error=1
+				elif ip address show dev "$dev4" 2>/dev/null | grep -q "POINTOPOINT"; then
+					try ip -4 route replace default dev "$dev4" table "$tid" || ipv4_error=1
 					try ip -4 rule replace fwmark "${mark}/${fw_mask}" table "$tid" priority "$priority" || ipv4_error=1
 				fi
 			elif [ -n "$strict_enforcement" ] && ! { is_split_uplink && [ "$iface" = "$uplink_interface6" ]; }; then
@@ -2391,23 +2406,18 @@ interface_routing() {
 				ipv6_error=0
 				ip -6 rule flush fwmark "${mark}/${fw_mask}" table "$tid" >/dev/null 2>&1
 				ip -6 route flush table "$tid" >/dev/null 2>&1
-				if { [ -n "$gw6" ] && [ "$gw6" != "::/0" ]; } || [ -n "$strict_enforcement" ]; then
-					if { [ -z "$gw6" ] || [ "$gw6" = "::/0" ]; } && ip address show dev "$dev6" 2>/dev/null | grep -q "POINTOPOINT"; then
+
+				if [ -n "$gw6" ] || [ -n "$strict_enforcement" ]; then
+					if [ -n "$gw6" ]; then 
+						try ip -6 route replace default via "$gw6" dev "$dev6" table "$tid" metric "$uplink_interface6_metric" || ipv6_error=1
+					elif ip address show dev "$dev6" 2>/dev/null | grep -q "POINTOPOINT"; then     # might need to set this rule as first to prevent rogue gateway detection for point-to-point links
 						try ip -6 route replace default dev "$dev6" table "$tid" metric "$uplink_interface6_metric" || ipv6_error=1
-					elif [ -z "$gw6" ] || [ "$gw6" = "::/0" ]; then
-						try ip -6 route replace unreachable default table "$tid" || ipv6_error=1
-					elif ip -6 route list table main | grep -q " dev $dev6 "; then
-						if ip -6 address show dev "$dev6" | grep -q "BROADCAST"; then
-							try ip -6 route replace default via "$gw6" dev "$dev6" table "$tid" metric "$uplink_interface6_metric" || ipv6_error=1
-						elif ip -6 address show dev "$dev6" | grep -q "POINTOPOINT"; then
-							try ip -6 route replace default dev "$dev6" table "$tid" metric "$uplink_interface6_metric" || ipv6_error=1
-						else
-							json add error 'errorInterfaceRoutingUnknownDevType' "$dev6"
-						fi
 					else
-						try ip -6 route replace "$(ip -6 -o a show "$dev6" | awk '{print $4}')" dev "$dev6" table "$tid" || ipv6_error=1
-						try ip -6 route replace default dev "$dev6" table "$tid" || ipv6_error=1
+						try ip -6 route replace unreachable default table "$tid" || ipv6_error=1
 					fi
+					try ip -6 rule replace fwmark "${mark}/${fw_mask}" table "$tid" priority "$priority" || ipv6_error=1
+				elif ip address show dev "$dev6" 2>/dev/null | grep -q "POINTOPOINT"; then
+					try ip -6 route replace default dev "$dev6" table "$tid" metric "$uplink_interface6_metric" || ipv6_error=1
 					try ip -6 rule replace fwmark "${mark}/${fw_mask}" table "$tid" priority "$priority" || ipv6_error=1
 				fi
 			elif [ -n "$ipv6_enabled" ] && [ -n "$strict_enforcement" ] && ! { is_split_uplink && [ "$iface" = "$uplink_interface4" ]; }; then
