@@ -7,11 +7,11 @@ oneTimeTearDown() { rm -rf "${MOCK_ROOT:-}"; }
 # Override ip function for gateway fallback tests
 ip() {
 	case "$*" in
-		"-4 a list dev eth0")
-			echo "    inet 192.168.1.100/24 brd 192.168.1.255 scope global eth0"
+		"-4 route show dev "$dev" table all")
+			echo "default via 192.168.1.100 proto static src 192.168.1.9"
 			;;
-		"-6 a list dev eth0")
-			echo "    inet6 fd00::100/64 scope global"
+		"-6 route show dev "$dev" table all")
+			echo "default from fd00::100 via fd00::1 proto static metric 512 pref medium"
 			;;
 		*) echo "" ;;
 	esac
