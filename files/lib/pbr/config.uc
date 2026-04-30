@@ -86,6 +86,8 @@ function create_config(uci_mod, ubus_mod, pkg) {
 		dest_port: ['string', ''],
 		proto:     ['string', ''],
 		chain:     ['string', ''],
+		gateway:   ['string', ''],
+		gateway6:  ['string', ''],
 	};
 
 	const dns_policy_schema = {

@@ -230,6 +230,8 @@ load_validate_policy() {
 	local src_port
 	local dest_addr
 	local dest_port
+	local gateway
+	local gateway6
 	uci_load_validate "$packageName" 'policy' "$1" "${2}${3:+ ${3}}" \
 		'name:string:Untitled' \
 		'enabled:bool:1' \
@@ -240,6 +242,8 @@ load_validate_policy() {
 		'src_port:list(neg(or(portrange,string)))' \
 		'dest_addr:list(neg(or(host,network,string)))' \
 		'dest_port:list(neg(or(portrange,string)))' \
+		'gateway:or("", ip4addr)' \
+		'gateway6:or("", ip6addr)' \
 	;
 }
 

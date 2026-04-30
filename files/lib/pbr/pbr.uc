@@ -46,6 +46,7 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 
 	let iface_registry = {};
 	let iface_priority = '';
+	let iface_mark_next = '';
 	let ifaces_triggers = '';
 	let service_start_trigger = '';
 	let process_dns_policy_error = false;
@@ -64,19 +65,55 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 			delete iface_registry[k];
 	}
 	
-	function get_mark(iface) {
-		let iface_key = replace(iface, '-', '_');
+	function sanitize_profile_part(value) {
+		value = replace('' + (value || ''), /[^A-Za-z0-9_]+/g, '_');
+		value = replace(value, /^_+|_+$/g, '');
+		return value || 'auto';
+	}
+
+	function get_profile_name(iface, gateway, gateway6) {
+		gateway = trim('' + (gateway || ''));
+		gateway6 = trim('' + (gateway6 || ''));
+		if (!gateway && !gateway6) return iface;
+		let parts = [];
+		if (gateway) {
+			push(parts, 'gw');
+			push(parts, sanitize_profile_part(gateway));
+		}
+		if (gateway6) {
+			push(parts, 'gw6');
+			push(parts, sanitize_profile_part(gateway6));
+		}
+		return iface + '_' + join('_', parts);
+	}
+
+	function get_profile_key(iface, gateway, gateway6) {
+		return replace(get_profile_name(iface, gateway, gateway6), '-', '_');
+	}
+
+	function get_mark(iface, gateway, gateway6) {
+		let iface_key = get_profile_key(iface, gateway, gateway6);
 		return iface_registry[iface_key]?.mark;
 	}
 	
-	function set_interface(iface, data) {
-		let iface_key = replace(iface, '-', '_');
+	function set_interface(iface, data, gateway, gateway6) {
+		let iface_key = get_profile_key(iface, gateway, gateway6);
+		if (data.name == null) data.name = iface_key;
+		if (data.iface == null) data.iface = iface;
+		if (data.gateway == null) data.gateway = trim('' + (gateway || ''));
+		if (data.gateway6 == null) data.gateway6 = trim('' + (gateway6 || ''));
+		if (data.gateway_override == null) data.gateway_override = !!(data.gateway || data.gateway6);
+		if (data.table_name == null) data.table_name = get_profile_name(iface, gateway, gateway6);
 		iface_registry[iface_key] = data;
 	}
 	
-	function get_interface(iface) {
-		let iface_key = replace(iface, '-', '_');
+	function get_interface(iface, gateway, gateway6) {
+		let iface_key = get_profile_key(iface, gateway, gateway6);
 		return iface_registry[iface_key];
+	}
+
+	function policy_gateway_is_valid(gateway, gateway6) {
+		return (!gateway || V.is_ipv4(gateway)) && (!gateway6 || V.is_ipv6(gateway6));
 	}
 	
 	// ── Config / Environment Loading ────────────────────────────────────
@@ -356,11 +393,14 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 	
 	// ── Policy Routing ──────────────────────────────────────────────────
 	
-	function policy_routing(name, iface, src_addr, src_port, dest_addr, dest_port, proto, chain, uid) {
+	function policy_routing(name, iface, src_addr, src_port, dest_addr, dest_port, proto, chain, uid, gateway, gateway6) {
 		let nft_insert = 'add';
 		let nft_table = pkg.nft_table;
 		let nft_prefix = pkg.nft_prefix;
-		let mark = get_mark(iface);
+		gateway = trim('' + (gateway || ''));
+		gateway6 = trim('' + (gateway6 || ''));
+		let policy_target = get_profile_key(iface, gateway, gateway6);
+		let mark = get_mark(iface, gateway, gateway6);
 	
 		proto = lc(proto || '');
 		chain = lc(chain || '') || 'prerouting';
@@ -395,7 +435,7 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 				return 1;
 			}
 		} else if (mark) {
-			let chain_name = get_interface(iface).chain_name;
+			let chain_name = get_interface(iface, gateway, gateway6).chain_name;
 			if (index(chain_name, pkg.mwan4_nft_prefix) == 0) {
 				dest4 = 'goto ' + chain_name + '_ipv4';
 				dest6 = 'goto ' + chain_name + '_ipv6';
@@ -434,7 +474,7 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 			}
 	
 			if (src_addr) {
-				let r = nft.classify_addr(src_addr, 'src', iface, uid, name, true);
+				let r = nft.classify_addr(src_addr, 'src', policy_target, uid, name, true);
 				param4 = r.param4;
 				param6 = r.param6;
 				src_inline_set_ipv4_empty = r.empty4;
@@ -442,7 +482,7 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 			}
 	
 			if (dest_addr) {
-				let r = nft.classify_addr(dest_addr, 'dst', iface, uid, name, true);
+				let r = nft.classify_addr(dest_addr, 'dst', policy_target, uid, name, true);
 				param4 += (param4 ? ' ' : '') + r.param4;
 				param6 += (param6 ? ' ' : '') + r.param6;
 				dest_inline_set_ipv4_empty = r.empty4;
@@ -470,7 +510,7 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 				param4 += (param4 ? ' ' : '') + port_param;
 				param6 += (param6 ? ' ' : '') + port_param;
 			}
-	
+
 			let rule_params = cfg._nft_rule_params ? ' ' + cfg._nft_rule_params : '';
 	
 			if (net.is_tor(iface)) {
@@ -597,19 +637,24 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 	
 	// ── Policy Process ──────────────────────────────────────────────────
 	
-	function policy_process(uid, enabled, name, interface_name, src_addr, src_port, dest_addr, dest_port, proto, chain) {
+	function policy_process(uid, enabled, name, interface_name, src_addr, src_port, dest_addr, dest_port, proto, chain, gateway, gateway6) {
 		if (enabled != '1') return 0;
 	
 		src_addr = replace(src_addr, /[,;{};]/g, ' ');
 		src_port = replace(src_port, /[,;{}]/g, ' ');
 		dest_addr = replace(dest_addr, /[,;{}]/g, ' ');
 		dest_port = replace(dest_port, /[,;{}]/g, ' ');
+		gateway = trim('' + (gateway || ''));
+		gateway6 = trim('' + (gateway6 || ''));
+		let gateway_override = gateway || gateway6;
 	
 		process_policy_error = false;
 		proto = lc(proto || '');
 		if (proto == 'auto' || proto == 'all') proto = '';
 	
-		output.verbose.write("Routing '" + name + "' via " + interface_name + ' ');
+		output.verbose.write("Routing '" + name + "' via " + interface_name +
+			(gateway ? ' gateway ' + gateway : '') +
+			(gateway6 ? ' gateway6 ' + gateway6 : '') + ' ');
 	
 		if (!src_addr && !src_port && !dest_addr && !dest_port && !proto) {
 			push(state.errors, { code: 'errorPolicyNoSrcDest', info: name });
@@ -621,6 +666,18 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		}
 		if (!net.is_supported_interface(interface_name) && !net.is_mwan4_strategy(interface_name)) {
 			push(state.errors, { code: 'errorPolicyUnknownInterface', info: name });
+			output.fail(); return 1;
+		}
+		if (gateway_override && !policy_gateway_is_valid(gateway, gateway6)) {
+			push(state.errors, { code: 'errorPolicyGatewayInvalid', info: name });
+			output.fail(); return 1;
+		}
+		if (gateway6 && !cfg.ipv6_enabled) {
+			push(state.errors, { code: 'errorPolicyProcessNoIpv6', info: name });
+			output.fail(); return 1;
+		}
+		if (gateway_override && (net.is_mwan4_interface(interface_name) || net.is_mwan4_strategy(interface_name))) {
+			push(state.errors, { code: 'errorPolicyGatewayUnsupportedMode', info: name });
 			output.fail(); return 1;
 		}
 	
@@ -654,7 +711,7 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 					if (!dest_addr || (dest_addr && fv_dest)) {
 						if (V.str_contains(fg_src, 'ipv4') && V.str_contains(fg_dest, 'ipv6')) continue;
 						if (V.str_contains(fg_src, 'ipv6') && V.str_contains(fg_dest, 'ipv4')) continue;
-						policy_routing(name, interface_name, fv_src, src_port, fv_dest, dest_port, proto, chain, uid);
+						policy_routing(name, interface_name, fv_src, src_port, fv_dest, dest_port, proto, chain, uid, gateway, gateway6);
 						processed_src += (processed_src ? ' ' : '') + (fv_src || '');
 						processed_dest += (processed_dest ? ' ' : '') + (fv_dest || '');
 					}
@@ -683,7 +740,7 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 	
 	let interface_routing = {};
 
-	interface_routing.create = function(tid, mark, iface, gw4, dev4, gw6, dev6, priority) {
+	interface_routing.create = function(tid, mark, iface, gw4, dev4, gw6, dev6, priority, table_name) {
 		if (!tid || !mark || !iface) {
 			push(state.errors, { code: 'errorInterfaceRoutingEmptyValues' });
 			return 1;
@@ -695,10 +752,11 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		let rule_params = cfg._nft_rule_params ? ' ' + cfg._nft_rule_params : '';
 		let ipv4_error = 1, ipv6_error = 1;
 
-		if (net.is_netifd_interface(iface) || net.is_mwan4_interface(iface))
+		if ((net.is_netifd_interface(iface) && (!table_name || table_name == iface)) || net.is_mwan4_interface(iface))
 			return 0;
-		let table_iface = iface;
-		if (net.is_split_uplink() && iface == cfg.uplink_interface6)
+		let is_custom_profile = table_name && table_name != iface;
+		let table_iface = table_name || iface;
+		if ((!table_name || table_name == iface) && net.is_split_uplink() && iface == cfg.uplink_interface6)
 			table_iface = cfg.uplink_interface4;
 
 		let rt_content = readfile(pkg.rt_tables_file) || '';
@@ -716,18 +774,18 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 
 		// Always create the nft mark chain so policies can reference it
 		// even when the interface device is not yet available (e.g. a down WireGuard tunnel)
-		let idata = get_interface(iface);
+		let idata = (is_custom_profile ? get_interface(table_name) : get_interface(iface)) || get_interface(iface);
 		nft.ensure_mark_chain(mark, idata.chain_name);
 
 		let dscp = config.uci_ctx(pkg.name).get(pkg.name, 'config', iface + '_dscp') || '0';
-		if (+dscp >= 1 && +dscp <= 63) {
+		if (!is_custom_profile && +dscp >= 1 && +dscp <= 63) {
 			nft.nft_add('add rule inet ' + nft_table + ' ' + nft_prefix + '_prerouting ' +
 				pkg.nft_ipv4_flag + ' dscp ' + dscp + rule_params + ' goto ' + idata.chain_name);
 			if (cfg.ipv6_enabled)
 				nft.nft_add('add rule inet ' + nft_table + ' ' + nft_prefix + '_prerouting ' +
 					pkg.nft_ipv6_flag + ' dscp ' + dscp + rule_params + ' goto ' + idata.chain_name);
 		}
-		if (iface == cfg.icmp_interface) {
+		if (!is_custom_profile && iface == cfg.icmp_interface) {
 			nft.nft_add('add rule inet ' + nft_table + ' ' + nft_prefix + '_output ' +
 				pkg.nft_ipv4_flag + ' protocol icmp' + rule_params + ' goto ' + idata.chain_name);
 			if (cfg.ipv6_enabled)
@@ -813,14 +871,14 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		return s;
 	};
 
-	interface_routing.destroy = function(tid, iface, priority) {
+	interface_routing.destroy = function(tid, iface, priority, table_name) {
 		if (!tid || !iface) {
 			push(state.errors, { code: 'errorInterfaceRoutingEmptyValues' });
 			return 1;
 		}
 		let readfile = _fs.readfile;
 		let writefile = _fs.writefile;
-		if (net.is_netifd_interface(iface) || net.is_mwan4_interface(iface)) return 0;
+		if ((net.is_netifd_interface(iface) && (!table_name || table_name == iface)) || net.is_mwan4_interface(iface)) return 0;
 		sh.run(pkg.ip_full + ' -4 rule del table main prio ' + (+priority - 1000));
 		sh.run(pkg.ip_full + ' -4 rule del table ' + tid + ' prio ' + priority);
 		sh.run(pkg.ip_full + ' -6 rule del table main prio ' + (+priority - 1000));
@@ -829,8 +887,8 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		sh.run(pkg.ip_full + ' -4 route flush table ' + tid);
 		sh.run(pkg.ip_full + ' -6 rule flush table ' + tid);
 		sh.run(pkg.ip_full + ' -6 route flush table ' + tid);
-		let table_iface = iface;
-		if (net.is_split_uplink() && iface == cfg.uplink_interface6)
+		let table_iface = table_name || iface;
+		if ((!table_name || table_name == iface) && net.is_split_uplink() && iface == cfg.uplink_interface6)
 			table_iface = cfg.uplink_interface4;
 		let rt = readfile(pkg.rt_tables_file) || '';
 		let lines = split(rt, '\n');
@@ -844,13 +902,13 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		return 0;
 	};
 
-	interface_routing.reload = function(tid, mark, iface, gw4, dev4, gw6, dev6, priority) {
+	interface_routing.reload = function(tid, mark, iface, gw4, dev4, gw6, dev6, priority, table_name) {
 		if (!tid || !mark || !iface) {
 			push(state.errors, { code: 'errorInterfaceRoutingEmptyValues' });
 			return 1;
 		}
 		let ipv4_error = 1, ipv6_error = 1;
-		if (net.is_netifd_interface(iface) || net.is_mwan4_interface(iface)) return 0;
+		if ((net.is_netifd_interface(iface) && (!table_name || table_name == iface)) || net.is_mwan4_interface(iface)) return 0;
 		if (dev4) {
 			ipv4_error = 0;
 			sh.run(pkg.ip_full + ' -4 rule flush fwmark ' + sh.quote(mark + '/' + cfg.fw_mask) + ' table ' + tid);
@@ -993,12 +1051,54 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		});
 	
 		iface_priority = _iface_priority;
+		iface_mark_next = iface_mark;
+	}
+
+	function register_policy_gateway_profiles() {
+		config.uci_ctx(pkg.name, true).foreach(pkg.name, 'policy', function(s) {
+			let p = config.parse_options(s, config.policy_schema);
+			let gateway = trim('' + (p.gateway || ''));
+			let gateway6 = trim('' + (p.gateway6 || ''));
+			if (p.enabled != '1' || (!gateway && !gateway6)) return;
+			if (!policy_gateway_is_valid(gateway, gateway6)) return;
+			if (gateway6 && !cfg.ipv6_enabled) return;
+			let iface = p.interface;
+			if (!net.is_supported_interface(iface) || net.is_tor(iface) || net.is_xray(iface) ||
+				net.is_ignore_target(iface) || net.is_mwan4_strategy(iface))
+				return;
+			let base = get_interface(iface);
+			if (!base || get_interface(iface, gateway, gateway6)) return;
+			if (net.is_mwan4_interface(iface))
+				return;
+			if (hex(iface_mark_next) > hex(cfg.fw_mask)) {
+				push(state.errors, { code: 'errorInterfaceMarkOverflow', info: get_profile_name(iface, gateway, gateway6) });
+				return;
+			}
+			let profile_name = get_profile_name(iface, gateway, gateway6);
+			let profile_key = get_profile_key(iface, gateway, gateway6);
+			let mark = iface_mark_next;
+			set_interface(iface, {
+				mark: mark,
+				priority: iface_priority,
+				chain_name: pkg.nft_prefix + '_mark_' + mark,
+				device_ipv4: base.device_ipv4 || '',
+				device_ipv6: base.device_ipv6 || '',
+				gateway_ipv4: gateway,
+				gateway_ipv6: gateway6,
+				is_default: false,
+				table_name: profile_name,
+				name: profile_key,
+			}, gateway, gateway6);
+			iface_mark_next = sprintf('0x%06x', hex(iface_mark_next) + hex(cfg.uplink_mark));
+			iface_priority = '' + (+iface_priority - 1);
+		});
 	}
 	
 	// ── Resolve TID ─────────────────────────────────────────────────────
 	
-	function interface_resolve_tid(iface) {
-		let tid = nft.get_rt_tables_id(iface);
+	function interface_resolve_tid(iface, table_name) {
+		if (table_name == null) table_name = iface;
+		let tid = nft.get_rt_tables_id(table_name);
 		if (!tid && net.is_split_uplink() && (net.is_uplink4(iface) || net.is_uplink6(iface))) {
 			let other = net.is_uplink4(iface) ? cfg.uplink_interface6 : cfg.uplink_interface4;
 			let other_data = get_interface(other);
@@ -1082,38 +1182,41 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 	interface_process.create = function(iface) {
 		let existing = get_interface(iface);
 		if (!existing) return 0;
+		let route_iface = existing.iface || iface;
 		let _mark = existing.mark;
 		let _priority = existing.priority;
 		let dev4 = existing.device_ipv4;
 		let dev6 = existing.device_ipv6;
 
-		let _tid = interface_resolve_tid(iface);
-		let gw4 = net.get_gateway4(iface, dev4);
-		let gw6 = net.get_gateway6(iface, dev6);
+		let _tid = interface_resolve_tid(route_iface, existing.table_name);
+		let gw4 = existing.gateway ? existing.gateway_ipv4 : net.get_gateway4(route_iface, dev4);
+		let gw6 = existing.gateway6 ? existing.gateway_ipv6 : net.get_gateway6(route_iface, dev6);
 		if (net.is_split_uplink()) {
-			if (net.is_uplink4(iface)) { gw6 = ''; dev6 = ''; }
-			else if (net.is_uplink6(iface)) { gw4 = ''; dev4 = ''; }
+			if (net.is_uplink4(route_iface)) { gw6 = ''; dev6 = ''; }
+			else if (net.is_uplink6(route_iface)) { gw4 = ''; dev4 = ''; }
 		}
 		let dg4 = gw4 || '0.0.0.0';
 		let dg6 = gw6 || '::/0';
-		let disp_dev = (iface != dev4) ? dev4 : '';
+		let disp_dev = (route_iface != dev4) ? dev4 : '';
 		let disp_status = '';
 		if (net.is_default_dev(dev4))
 			disp_status = (cfg.verbosity == '1') ? sym.ok[0] : sym.ok[1];
-		if (net.is_netifd_interface_default(iface))
+		if (!existing.gateway_override && net.is_netifd_interface_default(route_iface))
 			disp_status = (cfg.verbosity == '1') ? sym.okb[0] : sym.okb[1];
-		let display_text = iface + '/' + (disp_dev ? disp_dev + '/' : '') + dg4 + (cfg.ipv6_enabled ? '/' + dg6 : '');
+		let display_name = existing.name || iface;
+		let display_text = display_name + '/' + (disp_dev ? disp_dev + '/' : '') + dg4 + (cfg.ipv6_enabled ? '/' + dg6 : '');
 		output.verbose.write("Setting up routing for '" + display_text + "' ");
-		if (interface_routing.create(_tid, _mark, iface, gw4, dev4, gw6, dev6, _priority) == 0) {
-			set_interface(iface, {
+		if (interface_routing.create(_tid, _mark, route_iface, gw4, dev4, gw6, dev6, _priority, existing.table_name) == 0) {
+			set_interface(route_iface, {
 				tid: _tid, mark: _mark, priority: _priority,
 				chain_name: existing.chain_name,
 				device_ipv4: dev4 || '', device_ipv6: dev6 || '',
 				gateway_ipv4: gw4 || '', gateway_ipv6: gw6 || '',
 				is_default: disp_status ? true : false,
 				status_symbol: disp_status, action: 'create',
-			});
-			if (net.is_netifd_interface(iface)) output.okb();
+				table_name: existing.table_name, name: display_name,
+			}, existing.gateway, existing.gateway6);
+			if (!existing.gateway_override && net.is_netifd_interface(route_iface)) output.okb();
 			else output.ok();
 		} else {
 			push(state.errors, { code: 'errorFailedSetup', info: display_text });
@@ -1148,20 +1251,21 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		}
 		let existing = get_interface(iface);
 		if (!existing) return 0;
+		let route_iface = existing.iface || iface;
 		let _mark = existing.mark;
 		let _priority = existing.priority;
 		let dev4 = existing.device_ipv4;
 		let dev6 = existing.device_ipv6;
-		let _tid = interface_resolve_tid(iface);
+		let _tid = interface_resolve_tid(route_iface, existing.table_name);
 		if (net.is_split_uplink()) {
-			if (net.is_uplink4(iface)) dev6 = '';
-			else if (net.is_uplink6(iface)) dev4 = '';
+			if (net.is_uplink4(route_iface)) dev6 = '';
+			else if (net.is_uplink6(route_iface)) dev4 = '';
 		}
-		let disp_dev = (iface != dev4) ? dev4 : '';
-		let display_text = iface + '/' + (disp_dev ? disp_dev : '');
+		let disp_dev = (route_iface != dev4) ? dev4 : '';
+		let display_text = (existing.name || iface) + '/' + (disp_dev ? disp_dev : '');
 		output.verbose.write("Removing routing for '" + display_text + "' ");
-		interface_routing.destroy(_tid, iface, _priority);
-		if (net.is_netifd_interface(iface)) output.okb();
+		interface_routing.destroy(_tid, route_iface, _priority, existing.table_name);
+		if (!existing.gateway_override && net.is_netifd_interface(route_iface)) output.okb();
 		else output.ok();
 		return 0;
 	};
@@ -1169,81 +1273,86 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 	interface_process.reload = function(iface) {
 		let existing = get_interface(iface);
 		if (!existing) return 0;
+		let route_iface = existing.iface || iface;
 		let _mark = existing.mark;
 		let _priority = existing.priority;
 		let dev4 = existing.device_ipv4;
 		let dev6 = existing.device_ipv6;
-		let _tid = interface_resolve_tid(iface);
-		let gw4 = net.get_gateway4(iface, dev4);
-		let gw6 = net.get_gateway6(iface, dev6);
+		let _tid = interface_resolve_tid(route_iface, existing.table_name);
+		let gw4 = existing.gateway ? existing.gateway_ipv4 : net.get_gateway4(route_iface, dev4);
+		let gw6 = existing.gateway6 ? existing.gateway_ipv6 : net.get_gateway6(route_iface, dev6);
 		if (net.is_split_uplink()) {
-			if (net.is_uplink4(iface)) { gw6 = ''; dev6 = ''; }
-			else if (net.is_uplink6(iface)) { gw4 = ''; dev4 = ''; }
+			if (net.is_uplink4(route_iface)) { gw6 = ''; dev6 = ''; }
+			else if (net.is_uplink6(route_iface)) { gw4 = ''; dev4 = ''; }
 		}
-		let disp_dev = (iface != dev4) ? dev4 : '';
+		let disp_dev = (route_iface != dev4) ? dev4 : '';
 		let disp_status = '';
 		if (net.is_default_dev(dev4))
 			disp_status = (cfg.verbosity == '1') ? sym.ok[0] : sym.ok[1];
-		if (net.is_netifd_interface_default(iface))
+		if (!existing.gateway_override && net.is_netifd_interface_default(route_iface))
 			disp_status = (cfg.verbosity == '1') ? sym.okb[0] : sym.okb[1];
-		set_interface(iface, {
+		set_interface(route_iface, {
 			tid: _tid, mark: _mark, priority: _priority,
 			chain_name: existing.chain_name,
 			device_ipv4: dev4 || '', device_ipv6: dev6 || '',
 			gateway_ipv4: gw4 || '', gateway_ipv6: gw6 || '',
 			is_default: disp_status ? true : false,
 			status_symbol: disp_status, action: 'reload',
-		});
+			table_name: existing.table_name, name: existing.name || iface,
+		}, existing.gateway, existing.gateway6);
 		return 0;
 	};
 
 	interface_process.reload_interface = function(iface, reloaded_iface) {
 		let existing = get_interface(iface);
 		if (!existing) return 0;
+		let route_iface = existing.iface || iface;
 		let _mark = existing.mark;
 		let _priority = existing.priority;
 		let dev4 = existing.device_ipv4;
 		let dev6 = existing.device_ipv6;
-		let _tid = interface_resolve_tid(iface);
-		let gw4 = net.get_gateway4(iface, dev4);
-		let gw6 = net.get_gateway6(iface, dev6);
+		let _tid = interface_resolve_tid(route_iface, existing.table_name);
+		let gw4 = existing.gateway ? existing.gateway_ipv4 : net.get_gateway4(route_iface, dev4);
+		let gw6 = existing.gateway6 ? existing.gateway_ipv6 : net.get_gateway6(route_iface, dev6);
 		if (net.is_split_uplink()) {
-			if (net.is_uplink4(iface)) { gw6 = ''; dev6 = ''; }
-			else if (net.is_uplink6(iface)) { gw4 = ''; dev4 = ''; }
+			if (net.is_uplink4(route_iface)) { gw6 = ''; dev6 = ''; }
+			else if (net.is_uplink6(route_iface)) { gw4 = ''; dev4 = ''; }
 		}
-		let disp_dev = (iface != dev4) ? dev4 : '';
+		let disp_dev = (route_iface != dev4) ? dev4 : '';
 		let disp_status = '';
 		if (net.is_default_dev(dev4))
 			disp_status = (cfg.verbosity == '1') ? sym.ok[0] : sym.ok[1];
-		if (net.is_netifd_interface_default(iface))
+		if (!existing.gateway_override && net.is_netifd_interface_default(route_iface))
 			disp_status = (cfg.verbosity == '1') ? sym.okb[0] : sym.okb[1];
-		if (iface == reloaded_iface) {
-			let ri_text = iface + '/' + (disp_dev ? disp_dev + '/' : '') + (gw4 || '0.0.0.0') + (cfg.ipv6_enabled ? '/' + (gw6 || '::/0') : '');
+		if (route_iface == reloaded_iface) {
+			let ri_text = (existing.name || iface) + '/' + (disp_dev ? disp_dev + '/' : '') + (gw4 || '0.0.0.0') + (cfg.ipv6_enabled ? '/' + (gw6 || '::/0') : '');
 			output.verbose.write("Reloading routing for '" + ri_text + "' ");
-			if (interface_routing.reload(_tid, _mark, iface, gw4, dev4, gw6, dev6, _priority) == 0) {
-				set_interface(iface, {
+			if (interface_routing.reload(_tid, _mark, route_iface, gw4, dev4, gw6, dev6, _priority, existing.table_name) == 0) {
+				set_interface(route_iface, {
 					tid: _tid, mark: _mark, priority: _priority,
 					chain_name: existing.chain_name,
 					device_ipv4: dev4 || '', device_ipv6: dev6 || '',
 					gateway_ipv4: gw4 || '', gateway_ipv6: gw6 || '',
 					is_default: disp_status ? true : false,
 					status_symbol: disp_status, action: 'reload_interface',
-				});
-				if (net.is_netifd_interface(iface)) output.okb();
+					table_name: existing.table_name, name: existing.name || iface,
+				}, existing.gateway, existing.gateway6);
+				if (!existing.gateway_override && net.is_netifd_interface(route_iface)) output.okb();
 				else output.ok();
 			} else {
 				push(state.errors, { code: 'errorFailedReload', info: ri_text });
 				output.fail();
 			}
 		} else {
-			set_interface(iface, {
+			set_interface(route_iface, {
 				tid: _tid, mark: _mark, priority: _priority,
 				chain_name: existing.chain_name,
 				device_ipv4: dev4 || '', device_ipv6: dev6 || '',
 				gateway_ipv4: gw4 || '', gateway_ipv6: gw6 || '',
 				is_default: disp_status ? true : false,
 				status_symbol: disp_status, action: 'skip_interface',
-			});
+				table_name: existing.table_name, name: existing.name || iface,
+			}, existing.gateway, existing.gateway6);
 		}
 		return 0;
 	};
@@ -1671,6 +1780,7 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		let start_time, end_time;
 		start_time = time();
 		interface_enumerate();
+		register_policy_gateway_profiles();
 		end_time = time();
 		output.logger_debug(cfg.debug_performance, '[PERF-DEBUG] Enumerating interfaces took ' + (end_time - start_time) + 's');
 	
@@ -1716,9 +1826,8 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 			output.okn();
 			output.info.write('Reloading Interface: ' + reloaded_iface + ' ');
 			start_time = time();
-			config.uci_ctx('network').foreach('network', 'interface', function(s) {
-				interface_process.reload_interface(s['.name'], reloaded_iface);
-			});
+			for (let iname in keys(iface_registry))
+				interface_process.reload_interface(iname, reloaded_iface);
 			end_time = time();
 			output.logger_debug(cfg.debug_performance, '[PERF-DEBUG] Reloading interface ' + reloaded_iface + ' took ' + (end_time - start_time) + 's');
 			output.info.newline();
@@ -1733,9 +1842,8 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 	
 			output.info.write('Processing interfaces ');
 			start_time = time();
-			config.uci_ctx('network').foreach('network', 'interface', function(s) {
-				interface_process.create(s['.name']);
-			});
+			for (let iname in keys(iface_registry))
+				interface_process.create(iname);
 			interface_process.tor('destroy');
 			if (net.is_tor_running()) interface_process.tor('create');
 			interface_process.create_global_rules();
@@ -1751,7 +1859,7 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 					let p = config.parse_options(s, config.policy_schema);
 					policy_process(s['.name'],
 						p.enabled, p.name, p.interface, p.src_addr, p.src_port,
-						p.dest_addr, p.dest_port, p.proto, p.chain);
+						p.dest_addr, p.dest_port, p.proto, p.chain, p.gateway, p.gateway6);
 				});
 				end_time = time();
 				output.logger_debug(cfg.debug_performance, '[PERF-DEBUG] Processing policies took ' + (end_time - start_time) + 's');
@@ -1825,6 +1933,9 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 			if (iface.action == 'mwan4_strategy') continue;
 			push(gateways, {
 				name: name,
+				interface: iface.iface || name,
+				gateway: iface.gateway || '',
+				gateway6: iface.gateway6 || '',
 				device_ipv4: iface.device_ipv4,
 				gateway_ipv4: iface.gateway_ipv4,
 				device_ipv6: iface.device_ipv6,
@@ -1832,6 +1943,7 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 				'default': iface.is_default || false,
 				action: iface.action,
 				table_id: '' + (iface.tid || ''),
+				table_name: iface.table_name || name,
 				mark: iface.mark || '',
 				priority: '' + (iface.priority || ''),
 			});

@@ -66,6 +66,8 @@ function get_text(code, cfg, ...args) {
 		errorPolicyNoDns:                      sprintf("Policy '%s' has no assigned DNS", a1),
 		errorPolicyProcessNoInterfaceDns:      sprintf("Interface '%s' has no assigned DNS", a1),
 		errorPolicyUnknownInterface:           sprintf("Policy '%s' has an unknown interface", a1),
+		errorPolicyGatewayInvalid:             sprintf("Policy '%s' has an invalid gateway override", a1),
+		errorPolicyGatewayUnsupportedMode:     sprintf("Policy '%s' uses gateway override with an unsupported routing-table mode", a1),
 		errorPolicyProcessCMD:                 sprintf("'%s'", a1),
 		errorFailedSetup:                      sprintf("Failed to set up '%s'", a1),
 		errorFailedReload:                     sprintf("Failed to reload '%s'", a1),

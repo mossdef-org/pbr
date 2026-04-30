@@ -58,3 +58,11 @@ config policy
 	option interface 'wan'
 	option dest_addr 'plex.tv my.plexapp.com emby.media app.emby.media tv.emby.media'
 	option enabled '0'
+
+config policy
+	option name 'Example Custom Next-Hop'
+	option interface 'wan'
+	option gateway '192.0.2.1'
+	option gateway6 '2001:db8::1'
+	option dest_addr 'example.com'
+	option enabled '0'
