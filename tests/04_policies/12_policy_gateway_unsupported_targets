@@ -1,0 +1,121 @@
+Testing gateway overrides are rejected for special non-routing-table targets.
+
+-- File uci/pbr.json --
+{
+	"pbr": [
+		{
+			".name": "config",
+			"enabled": "1",
+			"fw_mask": "00ff0000",
+			"ipv6_enabled": "0",
+			"nft_rule_counter": "0",
+			"nft_set_auto_merge": "1",
+			"nft_set_counter": "0",
+			"nft_set_flags_interval": "1",
+			"nft_set_flags_timeout": "0",
+			"nft_set_policy": "performance",
+			"debug_performance": "0",
+			"nft_user_set_counter": "0",
+			"procd_boot_trigger_delay": "5000",
+			"procd_reload_delay": "0",
+			"resolver_set": "dnsmasq.nftset",
+			"strict_enforcement": "1",
+			"uplink_interface": "wan",
+			"uplink_interface6": "wan6",
+			"uplink_ip_rules_priority": "30000",
+			"uplink_mark": "00010000",
+			"verbosity": "2",
+			"ignored_interface": ["vpnserver"],
+			"lan_device": ["br-lan"],
+			"resolver_instance": ["*"]
+		}
+	],
+	"policy": [
+		{
+			".name": "policy_ignore_gateway",
+			"name": "Ignore With Gateway",
+			"enabled": "1",
+			"interface": "ignore",
+			"src_addr": "",
+			"dest_addr": "198.51.100.10",
+			"src_port": "",
+			"dest_port": "",
+			"proto": "",
+			"chain": "prerouting",
+			"gateway": "10.8.0.2"
+		},
+		{
+			".name": "policy_tor_gateway",
+			"name": "Tor With Gateway",
+			"enabled": "1",
+			"interface": "tor",
+			"src_addr": "",
+			"dest_addr": "198.51.100.20",
+			"src_port": "",
+			"dest_port": "",
+			"proto": "",
+			"chain": "prerouting",
+			"gateway": "10.8.0.2"
+		},
+		{
+			".name": "policy_xray_gateway",
+			"name": "Xray With Gateway",
+			"enabled": "1",
+			"interface": "xray_1234",
+			"src_addr": "",
+			"dest_addr": "198.51.100.30",
+			"src_port": "",
+			"dest_port": "",
+			"proto": "",
+			"chain": "prerouting",
+			"gateway": "10.8.0.2"
+		}
+	],
+	"dns_policy": [],
+	"include": []
+}
+-- End --
+
+-- File uci/network.json --
+{
+	"interface": [
+		{
+			".name": "wan",
+			"device": "eth1",
+			"proto": "dhcp"
+		}
+	]
+}
+-- End --
+
+-- Testcase --
+import create_pbr from 'pbr';
+let pbr = create_pbr();
+
+let result = pbr.start_service(['on_start']);
+let errors = result?.errors || [];
+let unsupported_errors = filter(errors, e => e.code == 'errorPolicyGatewayUnsupportedMode');
+
+let checks = [
+	['result_not_null', result != null],
+	['all_special_targets_rejected', length(unsupported_errors) == 3],
+	['ignore_rejected', length(filter(unsupported_errors, e => e.info == 'Ignore With Gateway')) == 1],
+	['tor_rejected', length(filter(unsupported_errors, e => e.info == 'Tor With Gateway')) == 1],
+	['xray_rejected', length(filter(unsupported_errors, e => e.info == 'Xray With Gateway')) == 1],
+];
+
+let pass = 0, fail = 0;
+for (let c in checks) {
+	if (c[1]) {
+		pass++;
+	} else {
+		fail++;
+		printf("FAIL: %s\n", c[0]);
+	}
+}
+printf("policy_gateway_unsupported_targets: %d/%d passed\n", pass, pass + fail);
+-- End --
+
+-- Expect stdout --
+policy_gateway_unsupported_targets: 5/5 passed
+-- End --

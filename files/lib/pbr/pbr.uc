@@ -676,7 +676,8 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 			push(state.errors, { code: 'errorPolicyProcessNoIpv6', info: name });
 			output.fail(); return 1;
 		}
-		if (gateway_override && (net.is_mwan4_interface(interface_name) || net.is_mwan4_strategy(interface_name))) {
+		if (gateway_override && (net.is_mwan4_interface(interface_name) || net.is_mwan4_strategy(interface_name) ||
+			net.is_ignore_target(interface_name) || net.is_tor(interface_name) || net.is_xray(interface_name))) {
 			push(state.errors, { code: 'errorPolicyGatewayUnsupportedMode', info: name });
 			output.fail(); return 1;
 		}
