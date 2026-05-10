@@ -2334,7 +2334,7 @@ interface_routing() {
 						try ip -6 route replace unreachable default table "$tid" || ipv6_error=1
 					fi
 					try ip -6 rule replace fwmark "${mark}/${fw_mask}" table "$tid" priority "$priority" || ipv6_error=1
-				elif ip -o link show dev "$dev4" 2>/dev/null | grep -q POINTOPOINT; then
+				elif ip -o link show dev "$dev6" 2>/dev/null | grep -q POINTOPOINT; then
 					try ip -6 route replace default dev "$dev6" table "$tid" metric "$uplink_interface6_metric" || ipv6_error=1
 					try ip -6 rule replace fwmark "${mark}/${fw_mask}" table "$tid" priority "$priority" || ipv6_error=1
 				fi
