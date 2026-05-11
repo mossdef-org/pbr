@@ -695,8 +695,28 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		let rule_params = cfg._nft_rule_params ? ' ' + cfg._nft_rule_params : '';
 		let ipv4_error = 1, ipv6_error = 1;
 
-		if (net.is_netifd_interface(iface) || net.is_mwan4_interface(iface))
+		if (net.is_mwan4_interface(iface))
 			return 0;
+
+		// netifd-managed iface: install the mark chain so policies can
+		// `goto pbr_mark_${mark}`, and an ip rule routing fwmark
+		// `${mark}/${fw_mask}` into the netifd-managed table
+		// (network.<iface>.ip4table / ip6table). The default route inside
+		// that table is owned by netifd and is left untouched.
+		if (net.is_netifd_interface(iface)) {
+			let idata = get_interface(iface);
+			nft.ensure_mark_chain(mark, idata.chain_name);
+			let ctx = config.uci_ctx('network');
+			let ip4t = ctx.get('network', iface, 'ip4table');
+			if (ip4t)
+				sh.try_ip(state.errors, '-4', 'rule', 'replace', 'fwmark', mark + '/' + cfg.fw_mask, 'table', ip4t, 'priority', priority);
+			if (cfg.ipv6_enabled) {
+				let ip6t = ctx.get('network', iface, 'ip6table');
+				if (ip6t)
+					sh.try_ip(state.errors, '-6', 'rule', 'replace', 'fwmark', mark + '/' + cfg.fw_mask, 'table', ip6t, 'priority', priority);
+			}
+			return 0;
+		}
 		let table_iface = iface;
 		if (net.is_split_uplink() && iface == cfg.uplink_interface6)
 			table_iface = cfg.uplink_interface4;
