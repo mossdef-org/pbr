@@ -824,14 +824,33 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		return s;
 	};
 
-	interface_routing.destroy = function(tid, iface, priority) {
+	interface_routing.destroy = function(tid, mark, iface, priority) {
 		if (!tid || !iface) {
 			push(state.errors, { code: 'errorInterfaceRoutingEmptyValues' });
 			return 1;
 		}
 		let readfile = _fs.readfile;
 		let writefile = _fs.writefile;
-		if (net.is_netifd_interface(iface) || net.is_mwan4_interface(iface)) return 0;
+		if (net.is_mwan4_interface(iface)) return 0;
+
+		// Symmetric cleanup for the ip rule fwmark→table entry installed by
+		// create() for a netifd-managed iface. Best-effort: missing rules are
+		// silently ignored (sh.run already swallows stderr). The mark chain
+		// itself is torn down with the rest of the nft table.
+		if (net.is_netifd_interface(iface)) {
+			if (mark) {
+				let ctx = config.uci_ctx('network');
+				let ip4t = ctx.get('network', iface, 'ip4table');
+				if (ip4t)
+					sh.run(pkg.ip_full + ' -4 rule del fwmark ' + mark + '/' + cfg.fw_mask + ' table ' + ip4t + ' priority ' + priority);
+				if (cfg.ipv6_enabled) {
+					let ip6t = ctx.get('network', iface, 'ip6table');
+					if (ip6t)
+						sh.run(pkg.ip_full + ' -6 rule del fwmark ' + mark + '/' + cfg.fw_mask + ' table ' + ip6t + ' priority ' + priority);
+				}
+			}
+			return 0;
+		}
 		sh.run(pkg.ip_full + ' -4 rule del table main prio ' + (+priority - 1000));
 		sh.run(pkg.ip_full + ' -4 rule del table ' + tid + ' prio ' + priority);
 		sh.run(pkg.ip_full + ' -6 rule del table main prio ' + (+priority - 1000));
@@ -1183,7 +1202,7 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		let disp_dev = (iface != dev4) ? dev4 : '';
 		let display_text = iface + '/' + (disp_dev ? disp_dev : '');
 		output.verbose.write("Removing routing for '" + display_text + "' ");
-		interface_routing.destroy(_tid, iface, _priority);
+		interface_routing.destroy(_tid, _mark, iface, _priority);
 		if (net.is_netifd_interface(iface)) output.okb();
 		else output.ok();
 		return 0;
