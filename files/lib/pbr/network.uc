@@ -132,10 +132,7 @@ function create_network(fs_mod, config, sh, pkg, platform, V) {
 	function is_ignore_target(iface) { return lc(iface) == 'ignore'; }
 	function is_netifd_table(name) { let c = readfile('/etc/config/network') || ''; return index(c, name) >= 0 && !!match(c, regexp('ip.table.*' + name)); }
 	function is_netifd_interface(iface) {
-		let ctx = config.uci_ctx('network');
-		let ip4t = ctx.get('network', iface, 'ip4table');
-		let ip6t = ctx.get('network', iface, 'ip6table');
-		return !!(ip4t || ip6t);
+		return !!(iface && env.netifd_mark[iface]);
 	}
 	function is_mwan4_interface(iface) {
 		return !!(iface && env.mwan4_mark[iface]);
