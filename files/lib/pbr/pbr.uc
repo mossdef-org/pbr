@@ -698,11 +698,8 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		if (net.is_mwan4_interface(iface))
 			return 0;
 
-		// netifd-managed iface: install the mark chain so policies can
-		// `goto pbr_mark_${mark}`, and an ip rule routing fwmark
-		// `${mark}/${fw_mask}` into the netifd-managed table
-		// (network.<iface>.ip4table / ip6table). The default route inside
-		// that table is owned by netifd and is left untouched.
+		// The default route inside the netifd-managed table is owned by
+		// netifd and is left untouched.
 		if (net.is_netifd_interface(iface)) {
 			let idata = get_interface(iface);
 			nft.ensure_mark_chain(mark, idata.chain_name);
@@ -839,10 +836,7 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		let writefile = _fs.writefile;
 		if (net.is_mwan4_interface(iface)) return 0;
 
-		// Symmetric cleanup for the ip rule fwmark->table entry installed by
-		// create() for a netifd-managed iface. Best-effort: missing rules are
-		// silently ignored (sh.run already swallows stderr). The mark chain
-		// itself is torn down with the rest of the nft table.
+		// The mark chain is torn down with the rest of the nft table.
 		if (net.is_netifd_interface(iface)) {
 			if (mark) {
 				let ctx = config.uci_ctx('network');
