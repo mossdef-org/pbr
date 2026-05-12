@@ -708,14 +708,14 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 			nft.ensure_mark_chain(mark, idata.chain_name);
 			let ctx = config.uci_ctx('network');
 			let ip4t = ctx.get('network', iface, 'ip4table');
-			if (ip4t)
-				sh.try_ip(state.errors, '-4', 'rule', 'replace', 'fwmark', mark + '/' + cfg.fw_mask, 'table', ip4t, 'priority', priority);
+			if (ip4t && sh.try_ip(state.errors, '-4', 'rule', 'replace', 'fwmark', mark + '/' + cfg.fw_mask, 'table', ip4t, 'priority', priority))
+				ipv4_error = 0;
 			if (cfg.ipv6_enabled) {
 				let ip6t = ctx.get('network', iface, 'ip6table');
-				if (ip6t)
-					sh.try_ip(state.errors, '-6', 'rule', 'replace', 'fwmark', mark + '/' + cfg.fw_mask, 'table', ip6t, 'priority', priority);
+				if (ip6t && sh.try_ip(state.errors, '-6', 'rule', 'replace', 'fwmark', mark + '/' + cfg.fw_mask, 'table', ip6t, 'priority', priority))
+					ipv6_error = 0;
 			}
-			return 0;
+			return (ipv4_error == 0 || ipv6_error == 0) ? 0 : 1;
 		}
 		let table_iface = iface;
 		if (net.is_split_uplink() && iface == cfg.uplink_interface6)
