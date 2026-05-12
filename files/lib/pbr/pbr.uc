@@ -708,12 +708,18 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 			nft.ensure_mark_chain(mark, idata.chain_name);
 			let ctx = config.uci_ctx('network');
 			let ip4t = ctx.get('network', iface, 'ip4table');
-			if (ip4t && sh.try_ip(state.errors, '-4', 'rule', 'replace', 'fwmark', mark + '/' + cfg.fw_mask, 'table', ip4t, 'priority', priority))
+			if (ip4t) {
 				ipv4_error = 0;
+				if (sh.try_ip(state.errors, '-4', 'rule', 'replace', 'fwmark', mark + '/' + cfg.fw_mask, 'table', ip4t, 'priority', priority) != true)
+					ipv4_error = 1;
+			}
 			if (cfg.ipv6_enabled) {
 				let ip6t = ctx.get('network', iface, 'ip6table');
-				if (ip6t && sh.try_ip(state.errors, '-6', 'rule', 'replace', 'fwmark', mark + '/' + cfg.fw_mask, 'table', ip6t, 'priority', priority))
+				if (ip6t) {
 					ipv6_error = 0;
+					if (sh.try_ip(state.errors, '-6', 'rule', 'replace', 'fwmark', mark + '/' + cfg.fw_mask, 'table', ip6t, 'priority', priority) != true)
+						ipv6_error = 1;
+				}
 			}
 			return (ipv4_error == 0 || ipv6_error == 0) ? 0 : 1;
 		}
@@ -833,7 +839,7 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		let writefile = _fs.writefile;
 		if (net.is_mwan4_interface(iface)) return 0;
 
-		// Symmetric cleanup for the ip rule fwmark→table entry installed by
+		// Symmetric cleanup for the ip rule fwmark->table entry installed by
 		// create() for a netifd-managed iface. Best-effort: missing rules are
 		// silently ignored (sh.run already swallows stderr). The mark chain
 		// itself is torn down with the rest of the nft table.
