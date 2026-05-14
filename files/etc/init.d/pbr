@@ -59,19 +59,24 @@ start_service() {
 	[ "$param" = 'on_boot' ] && return 0
 	trap 'enable_forward' EXIT
 	stop_forward
-	# Call ucode to do all work; it returns json_add_* shell commands
-	# shellcheck disable=SC2034
-	_procd_svc_data="$($_ucode start_service "$param" "$2")"
+	local _pbr_svc_defs
+	_pbr_svc_defs="$($_ucode start_service "$param" "$2")"
 	# shellcheck disable=SC2181
 	[ $? -eq 0 ] || return 1
-	if [ -z "$_procd_svc_data" ]; then
+	if [ -z "$_pbr_svc_defs" ]; then
 		# ucode returned no procd data (e.g. uplink not ready);
 		# set boot flag so service_triggers registers interface.*.up retry
 		[ ! -s "/var/run/${packageName}.lock" ] && touch "/var/run/${packageName}.boot"
 		return 0
 	fi
+	# ucode emits two top-level variable assignments:
+	#   _pbr_ifaces_triggers — space-separated iface list, consumed by service_triggers()
+	#   _pbr_svc_data        — json_add_* command block, eval'd by service_data()
+	# Both must be set here (before procd invokes service_triggers) so the
+	# trigger registration sees the iface list.
+	eval "$_pbr_svc_defs"
 }
-service_data() { [ -n "$_procd_svc_data" ] && eval "$_procd_svc_data"; }
+service_data() { eval "$_pbr_svc_data"; }
 stop_service() { $_ucode stop_service; }
 reload_service() { rc_procd start_service 'on_reload'; }
 restart_service() {
@@ -114,11 +119,9 @@ service_triggers() {
 			procd_add_config_trigger "config.change" 'openvpn' "/etc/init.d/${packageName}" reload 'on_openvpn_change'
 			procd_add_config_trigger "config.change" "${packageName}" "/etc/init.d/${packageName}" reload
 			procd_add_config_trigger "config.change" "network" "/etc/init.d/${packageName}" reload
-			if [ -n "$_pbr_ifaces_triggers" ]; then
-				for n in $_pbr_ifaces_triggers; do
-					procd_add_interface_trigger "interface.*" "$n" "/etc/init.d/${packageName}" on_interface_reload "$n"
-				done
-			fi
+			for n in $_pbr_ifaces_triggers; do
+				procd_add_interface_trigger "interface.*" "$n" "/etc/init.d/${packageName}" on_interface_reload "$n"
+			done
 		procd_close_trigger
 	fi
 }

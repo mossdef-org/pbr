@@ -21,10 +21,10 @@ let data = {
 let shell_output = pbr.emit_procd_shell(data);
 
 let checks = [
-	['has_error_code_1',  index(shell_output, "json_add_string code 'errorNoGateways'") >= 0],
-	['has_error_code_2',  index(shell_output, "json_add_string code 'errorConfigValidation'") >= 0],
-	['has_error_info',    index(shell_output, "json_add_string info '/etc/config/pbr'") >= 0],
-	['has_warning_code',  index(shell_output, "json_add_string code 'warningUplinkDown'") >= 0],
+	['has_error_code_1',  index(shell_output, "json_add_string code '\\''errorNoGateways'\\''") >= 0],
+	['has_error_code_2',  index(shell_output, "json_add_string code '\\''errorConfigValidation'\\''") >= 0],
+	['has_error_info',    index(shell_output, "json_add_string info '\\''/etc/config/pbr'\\''") >= 0],
+	['has_warning_code',  index(shell_output, "json_add_string code '\\''warningUplinkDown'\\''") >= 0],
 ];
 
 let pass = 0, fail = 0;

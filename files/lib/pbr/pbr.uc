@@ -1953,7 +1953,13 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 	}
 	
 	// ── emit_procd_shell ────────────────────────────────────────────────
-	
+
+	// Package the procd data into two top-level shell variable assignments
+	// consumed by init.d/pbr:
+	//   _pbr_ifaces_triggers — space-separated list of netifd ifaces that
+	//                          need per-interface procd triggers
+	//   _pbr_svc_data        — multi-line string of json_add_* commands
+	//                          that populate procd's service_data block
 	function emit_procd_shell(data) {
 		if (!data) return '';
 		let lines = [];
@@ -2014,13 +2020,12 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 			push(lines, 'json_close_object');
 		}
 		push(lines, 'json_close_array');
-	
-		if (data.ifacesTriggers)
-			push(lines, '_pbr_ifaces_triggers=' + sh.quote(data.ifacesTriggers));
-	
-		return join('\n', lines) + '\n';
+
+		let body = join('\n', lines);
+		return '_pbr_ifaces_triggers=' + sh.quote(data.ifacesTriggers || '') + '\n' +
+		       '_pbr_svc_data='        + sh.quote(body) + '\n';
 	}
-	
+
 	// ── Status Service ──────────────────────────────────────────────────
 	
 	function status_service(params) {
