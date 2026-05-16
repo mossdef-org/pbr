@@ -17,6 +17,7 @@ function create_nft(fs_mod, config, sh, output, pkg, platform, network, V, state
 
 	// ── Internal State ────────────────────────────────────────────────
 	let nft_lines = [];
+	let nft_structural_end = 0;
 	let _mark_chains_created = {};
 	let nft_fw4_dump = '';
 	let resolver_working_flag = false;
@@ -197,6 +198,7 @@ function create_nft(fs_mod, config, sh, output, pkg, platform, network, V, state
 			sh.mkdir_p(_dirname(pkg.nft_temp_file));
 			sh.mkdir_p(_dirname(pkg.nft_main_file));
 			nft_lines = [];
+			nft_structural_end = 0;
 			_mark_chains_created = {};
 			push(nft_lines, 'define ' + nft_prefix + '_fw_mark = ' + cfg.fw_mask);
 			push(nft_lines, 'define ' + nft_prefix + '_fw_mask = ' + cfg.fw_maskXor);
@@ -219,6 +221,7 @@ function create_nft(fs_mod, config, sh, output, pkg, platform, network, V, state
 			push(nft_lines, 'add rule inet ' + nft_table + ' mangle_output jump ' + nft_prefix + '_output');
 			push(nft_lines, 'add rule inet ' + nft_table + ' mangle_forward jump ' + nft_prefix + '_forward');
 			push(nft_lines, '');
+			nft_structural_end = length(nft_lines);
 			let rule_params = cfg._nft_rule_params ? ' ' + cfg._nft_rule_params : '';
 			for (let ch in chains)
 				push(nft_lines, 'add rule inet ' + nft_table + ' ' + nft_prefix + '_' + ch +
@@ -282,18 +285,50 @@ function create_nft(fs_mod, config, sh, output, pkg, platform, network, V, state
 			if (!length(nft_lines)) return false;
 			sh.mkdir_p(_dirname(pkg.nft_temp_file));
 			sh.mkdir_p(_dirname(pkg.nft_main_file));
-			writefile(pkg.nft_temp_file, '#!/usr/sbin/nft -f\n\n' + join('\n', nft_lines) + '\n');
+			let full_content = '#!/usr/sbin/nft -f\n\n' + join('\n', nft_lines) + '\n';
+			writefile(pkg.nft_temp_file, full_content);
 			output.info.write('Installing fw4 nft file ');
 			output.verbose.write('Installing fw4 nft file ');
-			if (nft_call('-c', '-f', pkg.nft_temp_file) &&
-				sh.run('cp -f ' + sh.quote(pkg.nft_temp_file) + ' ' + sh.quote(pkg.nft_main_file)) == 0) {
-				output.okn();
-				sh.run('fw4 -q reload');
-				return true;
-			} else {
+			if (!nft_call('-c', '-f', pkg.nft_temp_file)) {
 				push(state.errors, { code: 'errorNftMainFileInstall', info: pkg.nft_temp_file });
 				output.failn();
 				return false;
+			}
+			if (cfg.nft_soft_reload && nft_structural_end > 0) {
+				let chain_exists = sh.run('nft list chain inet ' + pkg.nft_table + ' mangle_prerouting 2>/dev/null | grep -q ' + sh.quote('jump ' + pkg.nft_prefix + '_prerouting')) == 0;
+				if (chain_exists) {
+					let soft_lines = slice(nft_lines, nft_structural_end);
+					writefile(pkg.nft_temp_file, '#!/usr/sbin/nft -f\n\n' + join('\n', soft_lines) + '\n');
+					if (nft_call('-f', pkg.nft_temp_file)) {
+						writefile(pkg.nft_main_file, full_content);
+						output.okn();
+						return true;
+					} else {
+						push(state.errors, { code: 'errorNftMainFileInstall', info: pkg.nft_temp_file });
+						output.failn();
+						return false;
+					}
+				} else {
+					if (sh.run('cp -f ' + sh.quote(pkg.nft_temp_file) + ' ' + sh.quote(pkg.nft_main_file)) == 0) {
+						output.okn();
+						sh.run('fw4 -q reload');
+						return true;
+					} else {
+						push(state.errors, { code: 'errorNftMainFileInstall', info: pkg.nft_temp_file });
+						output.failn();
+						return false;
+					}
+				}
+			} else {
+				if (sh.run('cp -f ' + sh.quote(pkg.nft_temp_file) + ' ' + sh.quote(pkg.nft_main_file)) == 0) {
+					output.okn();
+					sh.run('fw4 -q reload');
+					return true;
+				} else {
+					push(state.errors, { code: 'errorNftMainFileInstall', info: pkg.nft_temp_file });
+					output.failn();
+					return false;
+				}
 			}
 		}
 		case 'netifd': {
@@ -555,6 +590,23 @@ function create_nft(fs_mod, config, sh, output, pkg, platform, network, V, state
 		return _nftset_result(v4_ok, v6_ok);
 	};
 
+	nftset.cleanup = function(new_sets) {
+		let nft_table = pkg.nft_table;
+		let prefix = pkg.nft_prefix + '_';
+		let existing_str = get_nft_sets();
+		if (!existing_str) return true;
+		let existing = split(existing_str, ' ');
+		let ok = true;
+		for (let s in existing) {
+			s = trim(s);
+			if (!s || index(s, prefix) != 0) continue;
+			if (new_sets && index(new_sets, s) >= 0) continue;
+			if (!nft_call('flush', 'set', 'inet', nft_table, s)) ok = false;
+			if (!nft_call('delete', 'set', 'inet', nft_table, s)) ok = false;
+		}
+		return ok;
+	};
+
 
 	// ── cleanup ───────────────────────────────────────────────────────
 
@@ -629,6 +681,14 @@ function create_nft(fs_mod, config, sh, output, pkg, platform, network, V, state
 				}
 				break;
 			}
+			case 'pbr_chains': {
+				let chains = split(pkg.chains_list, ' ');
+				for (let c in [...chains, 'dstnat']) {
+					c = lc(c);
+					nft_call('flush', 'chain', 'inet', pkg.nft_table, pkg.nft_prefix + '_' + c);
+				}
+				break;
+			}
 			case 'marking_chains': {
 				let mark_chains = get_mark_nft_chains();
 				if (mark_chains) {
@@ -643,15 +703,7 @@ function create_nft(fs_mod, config, sh, output, pkg, platform, network, V, state
 				break;
 			}
 			case 'sets': {
-				let nft_sets_str = get_nft_sets();
-				if (nft_sets_str) {
-					let sets_list = split(nft_sets_str, ' ');
-					for (let s in sets_list) {
-						s = trim(s);
-						if (s)
-							nft_call('delete', 'set', 'inet', pkg.nft_table, s);
-					}
-				}
+				nftset.cleanup(null);
 				break;
 			}
 			}

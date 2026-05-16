@@ -1734,7 +1734,10 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		default:
 			nft.resolver.store_hash();
 			nft.resolver.configure();
-			nft.cleanup('main_table', 'rt_tables', 'main_chains', 'sets');
+			if (cfg.nft_soft_reload)
+				nft.cleanup('main_table', 'rt_tables', 'pbr_chains', 'marking_chains', 'sets');
+			else
+				nft.cleanup('main_table', 'rt_tables', 'main_chains', 'sets');
 			nft.nft_file.init('main', iface_registry);
 			output.okn();
 	
