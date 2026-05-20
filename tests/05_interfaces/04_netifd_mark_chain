@@ -1,0 +1,86 @@
+Manual ip4table entries must not classify an interface as pbr-managed
+netifd unless a matching mark exists in env.netifd_mark. Otherwise pbr
+skips creating the per-mark chain and policy goto rules break.
+
+-- File uci/network.json --
+{
+	"interface": [
+		{
+			".name": "loopback",
+			"device": "lo",
+			"proto": "static",
+			"ipaddr": "127.0.0.1",
+			"netmask": "255.0.0.0"
+		},
+		{
+			".name": "lan",
+			"device": "br-lan",
+			"proto": "static",
+			"ipaddr": "192.168.1.1/24"
+		},
+		{
+			".name": "wan",
+			"device": "eth1",
+			"proto": "dhcp"
+		},
+		{
+			".name": "wan6",
+			"device": "eth1",
+			"proto": "dhcpv6"
+		},
+		{
+			".name": "vpn",
+			"device": "tun0",
+			"proto": "openvpn",
+			"dns": ["10.8.0.1"],
+			"ip4table": "manual_vpn"
+		},
+		{
+			".name": "wg0",
+			"proto": "wireguard",
+			"listen_port": "51820",
+			"private_key": "mockkey"
+		},
+		{
+			".name": "vpnserver",
+			"proto": "wireguard",
+			"listen_port": "51821",
+			"device": "wg1"
+		}
+	]
+}
+-- End --
+
+-- Testcase --
+import create_pbr from 'pbr';
+let pbr = create_pbr();
+
+let result = pbr.start_service(['on_start']);
+let nft_content = global.mocklib.read_captured('/var/run/pbr.nft') || '';
+let vpn_gw = filter(result?.gateways || [], g => g.name == 'vpn')?.[0];
+let vpn_mark = vpn_gw?.mark || '';
+
+let checks = [
+	['result_not_null',           result != null],
+	['vpn_mark_present',          vpn_mark != ''],
+	['vpn_action_create',         vpn_gw?.action == 'create'],
+	['vpn_in_ifaces_triggers',    index(result?.ifacesTriggers || '', 'vpn') >= 0],
+	['nft_has_vpn_mark_chain',    vpn_mark != '' && index(nft_content, 'add chain inet fw4 pbr_mark_' + vpn_mark) >= 0],
+	['nft_policy_goto_vpn_chain', vpn_mark != '' && index(nft_content, 'goto pbr_mark_' + vpn_mark) >= 0],
+];
+
+let pass = 0, fail = 0;
+for (let c in checks) {
+	if (c[1]) {
+		pass++;
+	} else {
+		fail++;
+		printf("FAIL: %s\n", c[0]);
+	}
+}
+printf("netifd_mark_chain: %d/%d passed\n", pass, pass + fail);
+-- End --
+
+-- Expect stdout --
+netifd_mark_chain: 6/6 passed
+-- End --
