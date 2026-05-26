@@ -273,6 +273,7 @@ pbr_get_gateway4() {
 	eval "$1"='$gw'
 }
 pbr_get_gateway6() {
+	[ -z "$ipv6_enabled" ] && return 0
 	local iface="$2" dev="$3" gw
 	is_uplink4 "$iface" && iface="$uplink_interface6"
 	network_get_gateway6 gw "$iface" true
