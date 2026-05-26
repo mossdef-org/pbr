@@ -2115,15 +2115,17 @@ dns_policy_process() {
 	dest_dns_ipv4="$(str_first_value_ipv4 "$dest_dns")"
 	dest_dns_ipv6="$(str_first_value_ipv6 "$dest_dns")"
 	if is_supported_interface "$dest_dns_interface"; then
-		local d
+		local d s
 		for d in $(uci -q get network."$dest_dns_interface".dns); do
-			if ! is_family_mismatch "$src_addr" "$d"; then
-				if is_ipv4 "$d"; then
-					dest_dns_ipv4="${dest_dns_ipv4:-${d}}"
-				elif is_ipv6 "$d"; then
-					dest_dns_ipv6="${dest_dns_ipv6:-${d}}"
+			for s in $src_addr; do
+				if ! is_family_mismatch "$s" "$d"; then
+					if is_ipv4 "$d"; then
+						dest_dns_ipv4="${dest_dns_ipv4:-${d}}"
+					elif is_ipv6 "$d"; then
+						dest_dns_ipv6="${dest_dns_ipv6:-${d}}"
+					fi
 				fi
-			fi
+			done
 		done
 	fi
 
