@@ -1113,8 +1113,26 @@ nftset() {
 		;;
 		add_dnsmasq_element)
 			[ -n "$ipv6_enabled" ] || unset nftset6
-			grep -qxF "nftset=/${param}/4#inet#${nftTable}#${nftset4}${nftset6:+,6#inet#${nftTable}#${nftset6}} # $comment" "$packageDnsmasqFile" && return 0
-			echo "nftset=/${param}/4#inet#${nftTable}#${nftset4}${nftset6:+,6#inet#${nftTable}#${nftset6}} # $comment" >> "$packageDnsmasqFile" && ipv4_error=0
+			local new_spec="4#inet#${nftTable}#${nftset4}${nftset6:+,6#inet#${nftTable}#${nftset6}}"
+			local escaped_param
+			escaped_param=$(printf '%s' "$param" | sed 's/\./\\./g')
+			local safe_nftset4 safe_nftset6
+			safe_nftset4=$(printf '%s' "$nftset4" | sed 's|[/.^$*\[\\]|\\&|g')
+			safe_nftset6=$(printf '%s' "${nftset6:-}" | sed 's|[/.^$*\[\\]|\\&|g')
+			grep -qE "^nftset=/${escaped_param}/.*#${safe_nftset4}(,| |$)" "$packageDnsmasqFile" && return 0
+			if grep -q "^nftset=/${escaped_param}/" "$packageDnsmasqFile"; then
+				local append_spec="$new_spec"
+				if [ -n "$nftset6" ] && grep -qE "^nftset=/${escaped_param}/.*#${safe_nftset6}(,| |$)" "$packageDnsmasqFile"; then
+					append_spec="4#inet#${nftTable}#${nftset4}"
+				fi
+				local safe_append_spec safe_comment
+				safe_append_spec=$(printf '%s' "$append_spec" | sed 's|[|&\\]|\\&|g')
+				safe_comment=$(printf '%s' "$comment" | sed 's|[|&\\]|\\&|g')
+				sed -i "/^nftset=\/${escaped_param}\// s|\( #.*\)$|,${safe_append_spec}\1, ${safe_comment}|" \
+					"$packageDnsmasqFile" && ipv4_error=0
+			else
+				echo "nftset=/${param}/${new_spec} # ${comment}" >> "$packageDnsmasqFile" && ipv4_error=0
+			fi
 		;;
 		create)
 			case "$type" in
