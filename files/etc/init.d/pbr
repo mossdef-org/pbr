@@ -1126,8 +1126,8 @@ nftset() {
 					append_spec="4#inet#${nftTable}#${nftset4}"
 				fi
 				local safe_append_spec safe_comment
-				safe_append_spec=$(printf '%s' "$append_spec" | sed 's|[|&\\]|\\&|g')
-				safe_comment=$(printf '%s' "$comment" | sed 's|[|&\\]|\\&|g')
+				safe_append_spec=$(printf '%s' "$append_spec" | sed 's/[|&\\]/\\&/g')
+				safe_comment=$(printf '%s' "$comment" | sed 's/[|&\\]/\\&/g')
 				sed -i "/^nftset=\/${escaped_param}\// s|\( #.*\)$|,${safe_append_spec}\1, ${safe_comment}|" \
 					"$packageDnsmasqFile" && ipv4_error=0
 			else
