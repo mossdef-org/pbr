@@ -272,6 +272,15 @@ pbr_get_gateway4() {
 	fi
 	eval "$1"='$gw'
 }
+pbr_get_ipaddr4() {
+	local iface="$2" dev="$3" ipa
+	is_uplink6 "$iface" && iface="$uplink_interface4"
+	network_get_ipaddr ipa "$iface"
+	if [ -z "$ipa" ] || [ "$ipa" = '0.0.0.0' ]; then
+		ipa="$(ip -4 -o addr show dev "$dev" | awk '{print $4}' | cut -d/ -f1)"
+	fi
+	eval "$1"='$ipa'
+}
 pbr_get_gateway6() {
 	[ -z "$ipv6_enabled" ] && return 0
 	local iface="$2" dev="$3" gw
@@ -288,6 +297,16 @@ pbr_get_gateway6() {
 		{ [ -z "$gw" ] && ! ip address show dev "$dev" 2>/dev/null | grep -q "POINTOPOINT"; } && json add warning 'warningInterfaceRoutingUnknownGateway' "$dev"
 	fi
 	eval "$1"='$gw'
+}
+pbr_get_ipaddr6() {
+	[ -z "$ipv6_enabled" ] && return 0
+	local iface="$2" dev="$3" ipa
+	is_uplink4 "$iface" && iface="$uplink_interface6"
+	network_get_ipaddr6 ipa "$iface"
+	if [ -z "$ipa" ] || [ "$ipa" = '::/0' ] || [ "$ipa" = '::0/0' ] || [ "$ipa" = '::' ]; then
+		ipa="$(ip -6 -o addr show dev "$dev" scope global| awk '{print $4; exit}' | cut -d/ -f1)"
+	fi
+	eval "$1"='$ipa'
 }
 filter_options() {
 	local opt="$1" values="$2" v _ret
@@ -2467,8 +2486,8 @@ json_add_gateway() {
 }
 
 process_interface() {
-	local gw4 gw6 dev4 dev6 s=0 dscp iface="$1" action="$2" reloadedIface="$3"
-	local displayText dispDev dispGw4 dispGw6 dispStatus
+	local gw4 gw6 ipa4 ipa6 dev4 dev6 s=0 dscp iface="$1" action="$2" reloadedIface="$3"
+	local displayText dispDev dispGw4 dispGw6 dispIPa4 dispIPa6 dispStatus
 
 	if [ "$iface" = 'all' ]; then
 		case "$action" in
@@ -2605,8 +2624,10 @@ process_interface() {
 			eval "tid_${iface//-/_}"='$_tid'
 			pbr_get_gateway4 gw4 "$iface" "$dev4"
 			pbr_get_gateway6 gw6 "$iface" "$dev6"
-			dispGw4="${gw4:-0.0.0.0}"
-			dispGw6="${gw6:-::/0}"
+			pbr_get_ipaddr4 ipa4 "$iface" "$dev4"
+			pbr_get_ipaddr6 ipa6 "$iface" "$dev6"
+			dispGw4="${gw4:-${ipa4:--}}"
+			dispGw6="${gw6:-${ipa6:--}}"
 			if is_split_uplink; then
 				if is_uplink4 "$iface"; then
 					gw6=""; dev6=""
@@ -2624,7 +2645,7 @@ process_interface() {
 			displayText="${iface}/${dispDev:+${dispDev}/}${dispGw4}${ipv6_enabled:+/${dispGw6}}"
 			output 2 "Setting up routing for '$displayText' "
 			if interface_routing 'create' "$_tid" "$_mark" "$iface" "$gw4" "$dev4" "$gw6" "$dev6" "$_priority"; then
-				json_add_gateway 'create' "$_tid" "$_mark" "$iface" "$gw4" "$dev4" "$gw6" "$dev6" "$_priority" "$dispStatus"
+				json_add_gateway 'create' "$_tid" "$_mark" "$iface" "$dispGw4" "$dev4" "$dispGw6" "$dev6" "$_priority" "$dispStatus"
 				gatewaySummary="${gatewaySummary}${displayText}${dispStatus:+ ${dispStatus}}\n"
 				if is_netifd_interface "$iface"; then output_okb; else output_ok; fi
 			else
@@ -2694,8 +2715,10 @@ process_interface() {
 			eval "tid_${iface//-/_}"='$_tid'
 			pbr_get_gateway4 gw4 "$iface" "$dev4"
 			pbr_get_gateway6 gw6 "$iface" "$dev6"
-			dispGw4="${gw4:-0.0.0.0}"
-			dispGw6="${gw6:-::/0}"
+			pbr_get_ipaddr4 ipa4 "$iface" "$dev4"
+			pbr_get_ipaddr6 ipa6 "$iface" "$dev6"
+			dispGw4="${gw4:-${ipa4:--}}"
+			dispGw6="${gw6:-${ipa6:--}}"
 			if is_split_uplink; then
 				if is_uplink4 "$iface"; then
 					gw6=""; dev6=""
@@ -2723,8 +2746,10 @@ process_interface() {
 			eval "tid_${iface//-/_}"='$_tid'
 			pbr_get_gateway4 gw4 "$iface" "$dev4"
 			pbr_get_gateway6 gw6 "$iface" "$dev6"
-			dispGw4="${gw4:-0.0.0.0}"
-			dispGw6="${gw6:-::/0}"
+			pbr_get_ipaddr4 ipa4 "$iface" "$dev4"
+			pbr_get_ipaddr6 ipa6 "$iface" "$dev6"
+			dispGw4="${gw4:-${ipa4:--}}"
+			dispGw6="${gw6:-${ipa6:--}}"
 			if is_split_uplink; then
 				if is_uplink4 "$iface"; then
 					gw6=""; dev6=""
@@ -2743,7 +2768,7 @@ process_interface() {
 			if [ "$iface" = "$reloadedIface" ]; then
 				output 2 "Reloading routing for '$displayText' "
 				if interface_routing 'reload_interface' "$_tid" "$_mark" "$iface" "$gw4" "$dev4" "$gw6" "$dev6" "$_priority"; then
-					json_add_gateway 'reload_interface' "$_tid" "$_mark" "$iface" "$gw4" "$dev4" "$gw6" "$dev6" "$_priority" "$dispStatus"
+					json_add_gateway 'reload_interface' "$_tid" "$_mark" "$iface" "$dispGw4" "$dev4" "$dispGw6" "$dev6" "$_priority" "$dispStatus"
 					gatewaySummary="${gatewaySummary}${displayText}${dispStatus:+ ${dispStatus}}\n"
 					if is_netifd_interface "$iface"; then output_okb; else output_ok; fi
 				else
@@ -2751,7 +2776,7 @@ process_interface() {
 					output_fail
 				fi
 			else
-				json_add_gateway 'skip_interface' "$_tid" "$_mark" "$iface" "$gw4" "$dev4" "$gw6" "$dev6" "$_priority" "$dispStatus"
+				json_add_gateway 'skip_interface' "$_tid" "$_mark" "$iface" "$dispGw4" "$dev4" "$dispGw6" "$dev6" "$_priority" "$dispStatus"
 				gatewaySummary="${gatewaySummary}${displayText}${dispStatus:+ ${dispStatus}}\n"
 			fi
 		;;
