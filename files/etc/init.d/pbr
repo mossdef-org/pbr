@@ -277,7 +277,7 @@ pbr_get_ipaddr4() {
 	is_uplink6 "$iface" && iface="$uplink_interface4"
 	network_get_ipaddr ipa "$iface"
 	if [ -z "$ipa" ] || [ "$ipa" = '0.0.0.0' ]; then
-		ipa="$(ip -4 -o addr show dev "$dev" | awk '{print $4}' | cut -d/ -f1)"
+		[ -n "$dev" ] && ipa="$(ip -4 -o addr show dev "$dev" 2>/dev/null | awk '{print $4; exit}' | cut -d/ -f1)"
 	fi
 	eval "$1"='$ipa'
 }
@@ -304,7 +304,7 @@ pbr_get_ipaddr6() {
 	is_uplink4 "$iface" && iface="$uplink_interface6"
 	network_get_ipaddr6 ipa "$iface"
 	if [ -z "$ipa" ] || [ "$ipa" = '::/0' ] || [ "$ipa" = '::0/0' ] || [ "$ipa" = '::' ]; then
-		ipa="$(ip -6 -o addr show dev "$dev" scope global| awk '{print $4; exit}' | cut -d/ -f1)"
+		[ -n "$dev" ] && ipa="$(ip -6 -o addr show dev "$dev" scope global 2>/dev/null | awk '{print $4; exit}' | cut -d/ -f1)"
 	fi
 	eval "$1"='$ipa'
 }
