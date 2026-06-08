@@ -2487,7 +2487,7 @@ json_add_gateway() {
 
 process_interface() {
 	local gw4 gw6 ipa4 ipa6 dev4 dev6 s=0 dscp iface="$1" action="$2" reloadedIface="$3"
-	local displayText dispDev dispGw4 dispGw6 dispIPa4 dispIPa6 dispStatus
+	local displayText dispDev dispGw4 dispGw6 dispStatus
 
 	if [ "$iface" = 'all' ]; then
 		case "$action" in
