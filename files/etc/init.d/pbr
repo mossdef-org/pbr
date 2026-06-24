@@ -58,8 +58,10 @@ boot() {
 start_service() {
 	local param="${1:-on_start}"
 	[ "$param" = 'on_boot' ] && return 0
-	trap 'enable_forward' EXIT
-	stop_forward
+	if [ "$param" != 'on_interface_reload' ]; then
+		trap 'enable_forward' EXIT
+		stop_forward
+	fi
 	local _pbr_svc_defs
 	_pbr_svc_defs="$($_ucode start_service "$param" "$2")"
 	# shellcheck disable=SC2181
