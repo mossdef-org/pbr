@@ -104,7 +104,7 @@ service_started() {
 	[ "$1" = 'on_boot' ] && return 0
 	enable_forward
 	trap - EXIT
-	$_ucode service_started "$1"
+	$_ucode service_started "$1" "$_pbr_deferred_to_boot"
 }
 service_triggers() {
 	local procd_boot_trigger_delay procd_reload_delay n boot_mode=

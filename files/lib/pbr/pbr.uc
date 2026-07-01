@@ -1980,12 +1980,14 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 	
 	// ── service_started ─────────────────────────────────────────────────
 	
-	function service_started(param) {
+	function service_started(param, deferred_to_boot) {
 		if (param == 'on_boot') return;
 		// Uplink was down at start time; we've already emitted the warning
 		// and are waiting for the procd boot trigger to retry. This is a
 		// designed deferral, not a startup failure.
-		if (_deferred_to_boot) return;
+		if (deferred_to_boot == '1' || _deferred_to_boot) {
+			return;
+		}
 
 		load_platform();
 

@@ -41,7 +41,7 @@ case 'version':
 	break;
 
 case 'service_started':
-	pbr.service_started(ARGV[0]);
+	pbr.service_started(ARGV[0], ARGV[1]);
 	break;
 
 case 'should_skip_reload':

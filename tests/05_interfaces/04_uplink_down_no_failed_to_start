@@ -55,7 +55,12 @@ global.system = function(argv, timeout) {
 };
 
 let result = pbr.start_service(['on_start']);
-pbr.service_started('on_start');
+
+// OpenWrt rc.common wrapper runs service_started in a NEW ucode process,
+// making it stateless. The wrapper bridges this gap by passing the
+// deferred boot state as the second argument.
+let pbr2 = create_pbr();
+pbr2.service_started('on_start', result?.deferredToBoot ? '1' : '');
 
 let failed_to_start = filter(system_calls,
 	c => type(c) == 'string' && index(c, 'FAILED TO START') >= 0);
