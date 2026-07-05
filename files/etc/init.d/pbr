@@ -268,7 +268,8 @@ pbr_get_gateway4() {
 		# Fall back to ip route get using "table all" might already work
 		[ -z "$gw" ] && gw="$(ip -4 route get 1.1.1.1 oif "$dev" 2>/dev/null | awk '/via/ {print $3; exit}')"
 		# Raise warning if no gw and not point-to-point
-		{ [ -z "$gw" ] && ! ip address show dev "$dev" 2>/dev/null | grep -q "POINTOPOINT"; } && json add warning 'warningInterfaceRoutingUnknownGateway' "$dev"
+		{ [ -z "$gw" ] && ! ip address show dev "$dev" 2>/dev/null | grep -q "POINTOPOINT"; } && output_warning "Unknown IPv4 Gateway for interface:'$iface' device:'$dev'"
+		#{ [ -z "$gw" ] && ! ip address show dev "$dev" 2>/dev/null | grep -q "POINTOPOINT"; } && json add warning 'warningInterfaceRoutingUnknownGateway' "IPv4 interface:[$iface]; device:[$dev]"
 	fi
 	eval "$1"='$gw'
 }
@@ -294,7 +295,8 @@ pbr_get_gateway6() {
 		# Fall back to a link-local neighbor advertised as router.
 		[ -z "$gw" ] && gw="$(ip -6 neigh show dev "$dev" 2>/dev/null | awk '/^fe80:.*router/ {print $1; exit}')"
 		# Raise warning if no gw and not point-to-point link
-		{ [ -z "$gw" ] && ! ip address show dev "$dev" 2>/dev/null | grep -q "POINTOPOINT"; } && json add warning 'warningInterfaceRoutingUnknownGateway' "$dev"
+		{ [ -z "$gw" ] && ! ip address show dev "$dev" 2>/dev/null | grep -q "POINTOPOINT"; } && output_warning "Unknown IPv6 Gateway for interface:'$iface' device:'$dev'"
+		#{ [ -z "$gw" ] && ! ip address show dev "$dev" 2>/dev/null | grep -q "POINTOPOINT"; } && json add warning 'warningInterfaceRoutingUnknownGateway' "IPv6 interface:[$iface]; device:[$dev]"
 	fi
 	eval "$1"='$gw'
 }
@@ -1314,14 +1316,14 @@ cleanup() {
 json() {
 	local status message stats i
 	local action="$1" param="$2" value="$3"; shift 3; local info="$*";
-	local _current_namespace="$_JSON_PREFIX"
-	json_set_namespace "${packageName//-/_}_"
+	local _current_namespace
+	json_set_namespace "${packageName//-/_}_" _current_namespace
 	[ "$param" = 'error' ] && param='errors'
 	[ "$param" = 'warning' ] && param='warnings'
 	{ json_load_file "$runningStatusFile" || json_init; } >/dev/null 2>&1
 	case "$action" in
 		'get')
-			json_select "$param" >/dev/null 2>&1 || return
+			json_select "$param" >/dev/null 2>&1 || { json_set_namespace "$_current_namespace"; return; }
 			if [ -n "$value" ]; then
 				{
 				if json_select "$value"; then
@@ -2928,7 +2930,8 @@ start_service() {
 		return 0
 	fi
 
-	if [ -n "$(ubus_get_status error)" ] || [ -n "$(ubus_get_status warning)" ]; then
+	#ubus_get_status does not work on error and warnings, to be researched consider deleting warnings check
+	if [ -n "$(ubus_get_status error)" ] || [ -n "$(ubus_get_status warnings)" ]; then
 		serviceStartTrigger='on_start'
 		unset reloadedIface
 	elif ! is_service_running; then
@@ -3019,7 +3022,7 @@ start_service() {
 
 	json_add_int 'packageCompat' "$packageCompat"
 	json_add_object 'status'
-	if [ -n "$gatewaySummary" ]; then json_add_string 'gateways' "$gatewaySummary"; else json_add_error 'errorNoGateways'; fi
+	if [ -n "$gatewaySummary" ]; then json_add_string 'gateways' "$gatewaySummary"; else json_add_string 'error' 'errorNoGateways'; fi
 	json_close_object
 	json_add_array 'errors'
 		for k in $(json get errors); do
