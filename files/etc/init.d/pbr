@@ -3022,7 +3022,12 @@ start_service() {
 
 	json_add_int 'packageCompat' "$packageCompat"
 	json_add_object 'status'
-	if [ -n "$gatewaySummary" ]; then json_add_string 'gateways' "$gatewaySummary"; else json_add_string 'error' 'errorNoGateways'; fi
+	if [ -n "$gatewaySummary" ]; then
+		json_add_string 'gateways' "$gatewaySummary"
+	else
+		json add error 'errorNoGateways'
+		json_add_string 'error' 'errorNoGateways'
+	fi
 	json_close_object
 	json_add_array 'errors'
 		for k in $(json get errors); do
