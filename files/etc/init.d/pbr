@@ -432,6 +432,7 @@ get_mark_nft_chains() { "$nft" list table inet "$nftTable" 2>/dev/null | grep ch
 get_nft_sets() { "$nft" list table inet "$nftTable" 2>/dev/null | grep 'set' | grep "${nftPrefix}_" | awk '{ print $2 }'; }
 __ubus_get() { ubus call service list "{ 'name': '$packageName' }" | jsonfilter -e "$1"; }
 ubus_get_status() { __ubus_get "@.${packageName}.instances.main.data.status.${1}"; }
+ubus_get_data() { __ubus_get "@.${packageName}.instances.main.data.${1}[*]"; }  # use [*] otherwise it will return an array
 ubus_get_interface() { __ubus_get "@.${packageName}.instances.main.data.gateways[@.name='${1}']${2:+.${2}}"; }
 ubus_get_gateways() { __ubus_get "@.${packageName}.instances.main.data.gateways"; }
 config_get_list() { config_get "$@"; }
@@ -2928,7 +2929,8 @@ start_service() {
 		return 0
 	fi
 
-	if [ -n "$(ubus_get_status error)" ] || [ -n "$(ubus_get_status warning)" ]; then
+	# Errors are blocking on_interface_reload, warnings are excluded!
+	if [ -n "$(ubus_get_data errors)" ]; then
 		serviceStartTrigger='on_start'
 		unset reloadedIface
 	elif ! is_service_running; then
