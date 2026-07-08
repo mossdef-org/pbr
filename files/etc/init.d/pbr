@@ -2590,12 +2590,11 @@ process_interface() {
 		return 1
 	fi
 
-	if is_ovpn "$iface"; then
-		uci_get_device dev4 "$iface"
-		[ -z "$dev4" ] && uci_get_dev dev4 "$iface"
-	else
-		network_get_device dev4 "$iface"
-		[ -z "$dev4" ] && network_get_physdev dev4 "$iface"
+	network_get_device dev4 "$iface"
+	[ -n "$dev4" ] || network_get_physdev dev4 "$iface"
+	[ -n "$dev4" ] || uci_get_device dev4 "$iface"
+	if [ -z "$dev4" ] && is_ovpn "$iface"; then
+		uci_get_dev dev4 "$iface"
 	fi
 	if is_uplink4 "$iface" && [ -n "$uplink_interface6" ]; then
 		network_get_device dev6 "$uplink_interface6"
