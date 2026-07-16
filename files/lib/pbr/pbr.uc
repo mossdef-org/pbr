@@ -131,6 +131,7 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		output.okn();
 	};
 	forwarding.enable = function() {
+		load_config();
 		if (forwarding._read() != '1') {
 			sh.run('/sbin/sysctl -w net.ipv4.ip_forward=1');
 			sh.run('/sbin/sysctl -w net.ipv6.conf.all.forwarding=1');
