@@ -91,13 +91,13 @@ start_service() {
 service_data() { eval "$_pbr_svc_data"; }
 stop_service() { $_ucode stop_service; }
 reload_service() { rc_procd start_service 'on_reload'; }
-restart_service() {
+restart() {
 	trap 'enable_forward' EXIT
 	stop_forward
 	stop
 	# it takes time before routes are cleaned up, if started immediately a leak can occur
 	[ "$(cat /proc/sys/net/ipv4/ip_forward)" = "0" ] && sleep 2
-	rc_procd start_service 'on_restart'
+	start
 }
 status_service() { $_ucode status_service "$@"; }
 service_started() {
