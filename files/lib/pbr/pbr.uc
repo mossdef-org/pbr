@@ -1083,13 +1083,12 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		return 0;
 	};
 
-	// Build the "GW4[/GW6]" display suffix. IPv4 always renders (falling back
-	// to 0.0.0.0); the IPv6 segment is omitted entirely when the interface has
-	// no v6 gateway or address, so v6-less interfaces don't render a bare "/-".
+	// Build the "GW4[/GW6]" display suffix. IPv4 falls back to 0.0.0.0,
+	// IPv6 to ::0 ; the IPv6 segment is omitted when IPv6 is disabled
 	function disp_gw_suffix(dg4, dg6) {
 		let s = dg4 || '0.0.0.0';
-		if (cfg.ipv6_enabled && dg6 && dg6 != '')
-			s += '/' + dg6;
+		if (cfg.ipv6_enabled)
+			s += '/' + (dg6 || '::0');
 		return s;
 	}
 
