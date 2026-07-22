@@ -46,6 +46,11 @@ uci -q delete pbr.config.webui_show_ignore_target
 
 # ── Part 2: NFT resolver setup ───────────────────────────────────────
 
+check_dnsmasq_nftset() {
+	[ -z "$dnsmasq_features" ] && dnsmasq_features="$(dnsmasq --version | grep -m1 'Compile time options:' | cut -d: -f2) "
+	[ "${dnsmasq_features#* nftset }" != "$dnsmasq_features" ]
+}
+
 if [ "$(uci_get 'pbr' 'config' 'resolver_set')" != 'dnsmasq.nftset' ]; then
 	if check_dnsmasq_nftset; then
 		echo -n "Setting resolver_set to 'dnsmasq.nftset'... "
