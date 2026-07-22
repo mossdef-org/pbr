@@ -1102,8 +1102,8 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		let dev6 = existing.device_ipv6;
 
 		let _tid = interface_resolve_tid(iface);
-		let gw4 = net.get_gateway4(iface, dev4, state.errors);
-		let gw6 = net.get_gateway6(iface, dev6, state.errors);
+		let gw4 = net.get_gateway4(iface, dev4, state.warnings);
+		let gw6 = net.get_gateway6(iface, dev6, state.warnings);
 		// Fall back to the interface's own address for display when there is
 		// no gateway (e.g. point-to-point links). Computed before split-uplink
 		// clearing so the display reflects the interface's real addresses.
@@ -1193,8 +1193,8 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		let dev4 = existing.device_ipv4;
 		let dev6 = existing.device_ipv6;
 		let _tid = interface_resolve_tid(iface);
-		let gw4 = net.get_gateway4(iface, dev4, state.errors);
-		let gw6 = net.get_gateway6(iface, dev6, state.errors);
+		let gw4 = net.get_gateway4(iface, dev4, state.warnings);
+		let gw6 = net.get_gateway6(iface, dev6, state.warnings);
 		let ipa4 = net.get_ipaddr4(iface, dev4);
 		let ipa6 = net.get_ipaddr6(iface, dev6);
 		let dg4 = gw4 || ipa4 || '';
@@ -1228,8 +1228,8 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		let dev4 = existing.device_ipv4;
 		let dev6 = existing.device_ipv6;
 		let _tid = interface_resolve_tid(iface);
-		let gw4 = net.get_gateway4(iface, dev4, state.errors);
-		let gw6 = net.get_gateway6(iface, dev6, state.errors);
+		let gw4 = net.get_gateway4(iface, dev4, state.warnings);
+		let gw6 = net.get_gateway6(iface, dev6, state.warnings);
 		let ipa4 = net.get_ipaddr4(iface, dev4);
 		let ipa6 = net.get_ipaddr6(iface, dev6);
 		let dg4 = gw4 || ipa4 || '';
@@ -1774,9 +1774,6 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		let ubus_errors = config.ubus_call('service', 'list', { name: pkg.name });
 		let svc_data = ubus_errors?.[pkg.name]?.data;
 		if (svc_data?.errors && length(svc_data.errors) > 0) {
-			service_start_trigger = 'on_start';
-			reloaded_iface = null;
-		} else if (svc_data?.warnings && length(svc_data.warnings) > 0) {
 			service_start_trigger = 'on_start';
 			reloaded_iface = null;
 		} else if (!nft.is_service_running_nft()) {

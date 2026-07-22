@@ -211,7 +211,7 @@ function create_network(fs_mod, config, sh, pkg, platform, V) {
 		return '';
 	}
 
-	function get_gateway4(iface, dev, errors) {
+	function get_gateway4(iface, dev, warnings) {
 		if (is_uplink6(iface)) iface = cfg.uplink_interface4;
 		let gw = network_get_gateway(iface);
 		if (!gw || gw == '0.0.0.0') {
@@ -225,14 +225,14 @@ function create_network(fs_mod, config, sh, pkg, platform, V) {
 				let out2 = sh.exec(pkg.ip_full + ' -4 route get 1.1.1.1 oif ' + sh.quote(dev) + ' 2>/dev/null');
 				gw = any_via_from_route(out2);
 			}
-			// Raise error if no gw and not point-to-point
-			if (!gw && errors && index(sh.exec(pkg.ip_full + ' address show dev ' + sh.quote(dev) + ' 2>/dev/null'), 'POINTOPOINT') < 0)
-				push(errors, { code: 'errorInterfaceRoutingUnknownGateway', info: dev });
+			// Raise warning if no gw and not point-to-point
+			if (!gw && warnings && index(sh.exec(pkg.ip_full + ' address show dev ' + sh.quote(dev) + ' 2>/dev/null'), 'POINTOPOINT') < 0)
+				push(warnings, { code: 'warningInterfaceRoutingUnknownGateway4', info: 'interface:' + iface + '; device:' + dev + ' ' });
 		}
 		return gw;
 	}
 
-	function get_gateway6(iface, dev, errors) {
+	function get_gateway6(iface, dev, warnings) {
 		if (!cfg.ipv6_enabled) return null;
 		if (is_uplink4(iface)) iface = cfg.uplink_interface6;
 		let gw = network_get_gateway6(iface);
@@ -252,9 +252,9 @@ function create_network(fs_mod, config, sh, pkg, platform, V) {
 					}
 				}
 			}
-			// Raise error if no gw and not point-to-point
-			if (!gw && errors && index(sh.exec(pkg.ip_full + ' address show dev ' + sh.quote(dev) + ' 2>/dev/null'), 'POINTOPOINT') < 0)
-				push(errors, { code: 'errorInterfaceRoutingUnknownGateway', info: dev });
+			// Raise warning if no gw and not point-to-point
+			if (!gw && warnings && index(sh.exec(pkg.ip_full + ' address show dev ' + sh.quote(dev) + ' 2>/dev/null'), 'POINTOPOINT') < 0)
+				push(warnings, { code: 'warningInterfaceRoutingUnknownGateway6', info: 'interface:' + iface + '; device:' + dev + ' ' });
 		}
 		return gw;
 	}
