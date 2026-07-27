@@ -748,13 +748,13 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 			if (gw4 || cfg.strict_enforcement) {
 				if (gw4)
 					ipv4_error = sh.try_cmd(state.errors, pkg.ip_full, '-4', 'route', 'replace', 'default', 'via', gw4, 'dev', dev4, 'table', tid) ? 0 : 1;
-				else if (index(sh.exec(pkg.ip_full + ' address show dev ' + sh.quote(dev4)), 'POINTOPOINT') >= 0)
+				else if (net.is_p2p(dev4))
 					ipv4_error = sh.try_cmd(state.errors, pkg.ip_full, '-4', 'route', 'replace', 'default', 'dev', dev4, 'table', tid) ? 0 : 1;
 				else
 					ipv4_error = sh.try_cmd(state.errors, pkg.ip_full, '-4', 'route', 'replace', 'unreachable', 'default', 'table', tid) ? 0 : 1;
 				if (sh.try_ip(state.errors, '-4', 'rule', 'replace', 'fwmark', mark + '/' + cfg.fw_mask, 'table', tid, 'priority', priority) != true)
 					ipv4_error = 1;
-			} else if (index(sh.exec(pkg.ip_full + ' address show dev ' + sh.quote(dev4)), 'POINTOPOINT') >= 0) {
+			} else if (net.is_p2p(dev4)) {
 				ipv4_error = sh.try_cmd(state.errors, pkg.ip_full, '-4', 'route', 'replace', 'default', 'dev', dev4, 'table', tid) ? 0 : 1;
 				if (sh.try_ip(state.errors, '-4', 'rule', 'replace', 'fwmark', mark + '/' + cfg.fw_mask, 'table', tid, 'priority', priority) != true)
 					ipv4_error = 1;
@@ -775,13 +775,13 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 			if (gw6 || cfg.strict_enforcement) {
 				if (gw6)
 					ipv6_error = sh.try_cmd(state.errors, pkg.ip_full, '-6', 'route', 'replace', 'default', 'via', gw6, 'dev', dev6, 'table', tid, 'metric', cfg.uplink_interface6_metric) ? 0 : 1;
-				else if (index(sh.exec(pkg.ip_full + ' address show dev ' + sh.quote(dev6)), 'POINTOPOINT') >= 0)
+				else if (net.is_p2p(dev6))
 					ipv6_error = sh.try_cmd(state.errors, pkg.ip_full, '-6', 'route', 'replace', 'default', 'dev', dev6, 'table', tid, 'metric', cfg.uplink_interface6_metric) ? 0 : 1;
 				else
 					ipv6_error = sh.try_cmd(state.errors, pkg.ip_full, '-6', 'route', 'replace', 'unreachable', 'default', 'table', tid) ? 0 : 1;
 				if (sh.try_ip(state.errors, '-6', 'rule', 'replace', 'fwmark', mark + '/' + cfg.fw_mask, 'table', tid, 'priority', priority) != true)
 					ipv6_error = 1;
-			} else if (index(sh.exec(pkg.ip_full + ' address show dev ' + sh.quote(dev6)), 'POINTOPOINT') >= 0) {
+			} else if (net.is_p2p(dev6)) {
 				ipv6_error = sh.try_cmd(state.errors, pkg.ip_full, '-6', 'route', 'replace', 'default', 'dev', dev6, 'table', tid, 'metric', cfg.uplink_interface6_metric) ? 0 : 1;
 				if (sh.try_ip(state.errors, '-6', 'rule', 'replace', 'fwmark', mark + '/' + cfg.fw_mask, 'table', tid, 'priority', priority) != true)
 					ipv6_error = 1;
@@ -855,13 +855,13 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 			if (gw4 || cfg.strict_enforcement) {
 				if (gw4)
 					ipv4_error = sh.try_cmd(state.errors, pkg.ip_full, '-4', 'route', 'replace', 'default', 'via', gw4, 'dev', dev4, 'table', tid) ? 0 : 1;
-				else if (index(sh.exec(pkg.ip_full + ' address show dev ' + sh.quote(dev4)), 'POINTOPOINT') >= 0)
+				else if (net.is_p2p(dev4))
 					ipv4_error = sh.try_cmd(state.errors, pkg.ip_full, '-4', 'route', 'replace', 'default', 'dev', dev4, 'table', tid) ? 0 : 1;
 				else
 					ipv4_error = sh.try_cmd(state.errors, pkg.ip_full, '-4', 'route', 'replace', 'unreachable', 'default', 'table', tid) ? 0 : 1;
 				if (sh.try_ip(state.errors, '-4', 'rule', 'replace', 'fwmark', mark + '/' + cfg.fw_mask, 'table', tid, 'priority', priority) != true)
 					ipv4_error = 1;
-			} else if (index(sh.exec(pkg.ip_full + ' address show dev ' + sh.quote(dev4)), 'POINTOPOINT') >= 0) {
+			} else if (net.is_p2p(dev4)) {
 				ipv4_error = sh.try_cmd(state.errors, pkg.ip_full, '-4', 'route', 'replace', 'default', 'dev', dev4, 'table', tid) ? 0 : 1;
 				if (sh.try_ip(state.errors, '-4', 'rule', 'replace', 'fwmark', mark + '/' + cfg.fw_mask, 'table', tid, 'priority', priority) != true)
 					ipv4_error = 1;
@@ -881,13 +881,13 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 			if (gw6 || cfg.strict_enforcement) {
 				if (gw6)
 					ipv6_error = sh.try_cmd(state.errors, pkg.ip_full, '-6', 'route', 'replace', 'default', 'via', gw6, 'dev', dev6, 'table', tid, 'metric', cfg.uplink_interface6_metric) ? 0 : 1;
-				else if (index(sh.exec(pkg.ip_full + ' address show dev ' + sh.quote(dev6)), 'POINTOPOINT') >= 0)
+				else if (net.is_p2p(dev6))
 					ipv6_error = sh.try_cmd(state.errors, pkg.ip_full, '-6', 'route', 'replace', 'default', 'dev', dev6, 'table', tid, 'metric', cfg.uplink_interface6_metric) ? 0 : 1;
 				else
 					ipv6_error = sh.try_cmd(state.errors, pkg.ip_full, '-6', 'route', 'replace', 'unreachable', 'default', 'table', tid) ? 0 : 1;
 				if (sh.try_ip(state.errors, '-6', 'rule', 'replace', 'fwmark', mark + '/' + cfg.fw_mask, 'table', tid, 'priority', priority) != true)
 					ipv6_error = 1;
-			} else if (index(sh.exec(pkg.ip_full + ' address show dev ' + sh.quote(dev6)), 'POINTOPOINT') >= 0) {
+			} else if (net.is_p2p(dev6)) {
 				ipv6_error = sh.try_cmd(state.errors, pkg.ip_full, '-6', 'route', 'replace', 'default', 'dev', dev6, 'table', tid, 'metric', cfg.uplink_interface6_metric) ? 0 : 1;
 				if (sh.try_ip(state.errors, '-6', 'rule', 'replace', 'fwmark', mark + '/' + cfg.fw_mask, 'table', tid, 'priority', priority) != true)
 					ipv6_error = 1;

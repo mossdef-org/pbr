@@ -110,10 +110,31 @@ function create_network(fs_mod, config, sh, pkg, platform, V) {
 		return i;
 	}
 	function is_xray(iface) { return get_xray_traffic_port(iface) != null; }
+	function is_xfrm_interface(iface) { let _p = network_get_protocol(iface); return _p != null && substr(_p, 0, 4) == 'xfrm'; }
 	function is_tunnel(iface) {
 		return is_dslite(iface) || is_l2tp(iface) || is_oc(iface) || is_ovpn(iface) ||
 			is_pptp(iface) || is_softether(iface) || is_netbird(iface) ||
-			is_tailscale(iface) || is_tor(iface) || is_wg(iface);
+			is_tailscale(iface) || is_tor(iface) || is_wg(iface) || is_xfrm_interface(iface);
+	}
+
+	// ── Device-level Link Detectors ─────────────────────────────────
+	// dev-based (not iface-based): used for point-to-point gateway/route
+	// fallbacks, mirroring the shell version's is_point_to_point/is_xfrm/is_p2p.
+	// Uses `-o link show` (not `address show`) since POINTOPOINT is a link
+	// flag, not something reliably reported by `ip address show` for all
+	// interface types.
+	function is_point_to_point(dev) {
+		if (!dev) return false;
+		let out = sh.exec(pkg.ip_full + ' -o link show dev ' + sh.quote(dev) + ' 2>/dev/null');
+		return index(out, 'POINTOPOINT') >= 0;
+	}
+	function is_xfrm(dev) {
+		if (!dev) return false;
+		let out = sh.exec(pkg.ip_full + ' -o -d link show dev ' + sh.quote(dev) + ' 2>/dev/null');
+		return !!match(out, /\bxfrm\b/);
+	}
+	function is_p2p(dev) {
+		return is_point_to_point(dev) || is_xfrm(dev);
 	}
 
 	// ── Interface Classification ────────────────────────────────────
@@ -226,7 +247,7 @@ function create_network(fs_mod, config, sh, pkg, platform, V) {
 				gw = any_via_from_route(out2);
 			}
 			// Raise warning if no gw and not point-to-point
-			if (!gw && warnings && index(sh.exec(pkg.ip_full + ' address show dev ' + sh.quote(dev) + ' 2>/dev/null'), 'POINTOPOINT') < 0)
+			if (!gw && warnings && !is_p2p(dev))
 				push(warnings, { code: 'warningInterfaceRoutingUnknownGateway4', info: 'interface:' + iface + '; device:' + dev + ' ' });
 		}
 		return gw;
@@ -253,7 +274,7 @@ function create_network(fs_mod, config, sh, pkg, platform, V) {
 				}
 			}
 			// Raise warning if no gw and not point-to-point
-			if (!gw && warnings && index(sh.exec(pkg.ip_full + ' address show dev ' + sh.quote(dev) + ' 2>/dev/null'), 'POINTOPOINT') < 0)
+			if (!gw && warnings && !is_p2p(dev))
 				push(warnings, { code: 'warningInterfaceRoutingUnknownGateway6', info: 'interface:' + iface + '; device:' + dev + ' ' });
 		}
 		return gw;
@@ -377,8 +398,9 @@ function create_network(fs_mod, config, sh, pkg, platform, V) {
 		uci_get_device,
 		is_dslite, is_l2tp, is_oc, is_ovpn, is_pptp,
 		is_softether, is_netbird, is_tailscale,
-		is_wg, is_wg_server, is_tor, is_xray, is_tunnel,
+		is_wg, is_wg_server, is_tor, is_xray, is_xfrm_interface, is_tunnel,
 		get_xray_traffic_port,
+		is_point_to_point, is_xfrm, is_p2p,
 		is_wan, is_uplink, is_uplink4, is_uplink6, is_split_uplink,
 		is_default_dev, is_disabled_interface, is_lan,
 		is_ignored_interface, is_tor_running,
