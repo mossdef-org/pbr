@@ -268,8 +268,8 @@ pbr_get_gateway4() {
 		# Fall back to ip route get using "table all" might already work
 		[ -z "$gw" ] && gw="$(ip -4 route get 1.1.1.1 oif "$dev" 2>/dev/null | awk '/via/ {print $3; exit}')"
 		# Raise warning if no gw and not point-to-point
-		{ [ -z "$gw" ] && ! ip address show dev "$dev" 2>/dev/null | grep -q "POINTOPOINT"; } && output_warning "Unknown IPv4 Gateway for interface:'$iface' device:'$dev'"
-		#{ [ -z "$gw" ] && ! ip address show dev "$dev" 2>/dev/null | grep -q "POINTOPOINT"; } && json add warning 'warningInterfaceRoutingUnknownGateway' "IPv4 interface:[$iface]; device:[$dev]"
+		{ [ -z "$gw" ] && ! is_p2p "$dev"; } && output_warning "Unknown IPv4 Gateway for interface:'$iface' device:'$dev'"
+		#{ [ -z "$gw" ] && ! is_p2p "$dev"; } && json add warning 'warningInterfaceRoutingUnknownGateway' "IPv4 interface:$iface; device:$dev "
 	fi
 	eval "$1"='$gw'
 }
@@ -295,8 +295,8 @@ pbr_get_gateway6() {
 		# Fall back to a link-local neighbor advertised as router.
 		[ -z "$gw" ] && gw="$(ip -6 neigh show dev "$dev" 2>/dev/null | awk '/^fe80:.*router/ {print $1; exit}')"
 		# Raise warning if no gw and not point-to-point link
-		{ [ -z "$gw" ] && ! ip address show dev "$dev" 2>/dev/null | grep -q "POINTOPOINT"; } && output_warning "Unknown IPv6 Gateway for interface:'$iface' device:'$dev'"
-		#{ [ -z "$gw" ] && ! ip address show dev "$dev" 2>/dev/null | grep -q "POINTOPOINT"; } && json add warning 'warningInterfaceRoutingUnknownGateway' "IPv6 interface:[$iface]; device:[$dev]"
+		{ [ -z "$gw" ] && ! is_p2p "$dev"; } && output_warning "Unknown IPv6 Gateway for interface:'$iface' device:'$dev'"
+		#{ [ -z "$gw" ] && ! is_p2p "$dev"; } && json add warning 'warningInterfaceRoutingUnknownGateway' "IPv6 interface:$iface; device:$dev "
 	fi
 	eval "$1"='$gw'
 }
@@ -384,6 +384,7 @@ is_service_running_nft() { [ -x "$nft" ] && [ -n "$(get_mark_nft_chains)" ]; }
 is_supported_iface_dev() { local n dev; for n in $ifacesSupported; do network_get_device dev "$n"; [ "$1" = "$dev" ] && return 0; done; return 1; }
 is_supported_protocol() { grep -qi "^${1:--}" /etc/protocols;}
 is_pptp() { local p; network_get_protocol p "$1"; [ "${p:0:4}" = "pptp" ]; }
+is_point_to_point() { ip -o link show dev "$1" 2>/dev/null | grep -q "POINTOPOINT"; }
 is_softether() { local d; network_get_device d "$1"; [ "${d:0:4}" = "vpn_" ]; }
 is_split_uplink() { [ -n "$ipv6_enabled" ] && [ "$uplink_interface4" != "$uplink_interface6" ]; }
 is_supported_interface() { { is_lan "$1" || is_disabled_interface "$1"; } && return 1; str_contains_word "$supported_interface" "$1" || { ! is_ignored_interface "$1" && { is_uplink "$1" || is_wan "$1" || is_tunnel "$1"; }; } || is_ignore_target "$1" || is_xray "$1"; }
@@ -391,7 +392,7 @@ is_netbird() { local d; network_get_device d "$1"; [ "${d:0:2}" = "wt" ]; }
 is_tailscale() { local d; network_get_device d "$1"; [ "${d:0:9}" = "tailscale" ]; }
 is_tor() { [ "$(str_to_lower "$1")" = "tor" ]; }
 is_tor_running() { ! is_ignored_interface 'tor' && [ -s "$torConfigFile" ] && str_contains "$(ubus call service list "{ 'name': 'tor' }" | jsonfilter -e '@.tor.instances.*.running')" 'true' && return 0 || return 1; }
-is_tunnel() { is_dslite "$1" || is_l2tp "$1" || is_oc "$1" || is_ovpn "$1" || is_pptp "$1" || is_softether "$1" || is_netbird "$1" || is_tailscale "$1" || is_tor "$1" || is_wg "$1"; }
+is_tunnel() { is_dslite "$1" || is_l2tp "$1" || is_oc "$1" || is_ovpn "$1" || is_pptp "$1" || is_softether "$1" || is_netbird "$1" || is_tailscale "$1" || is_tor "$1" || is_wg "$1" || is_xfrm_interface "$1"; }
 is_url() { is_url_file "$1" || is_url_dl "$1"; }
 is_url_dl() { is_url_ftp "$1" || is_url_http "$1" || is_url_https "$1"; }
 is_url_file() { [ "$1" != "${1#file://}" ]; }
@@ -407,6 +408,9 @@ is_wan() { is_wan4 "$1" || is_wan6 "$1"; }
 is_wg() { local p lp; network_get_protocol p "$1"; uci_get_listen_port lp "$1"; [ -z "$lp" ] && [ "${p:0:9}" = "wireguard" ]; }
 is_wg_server() { local p lp; network_get_protocol p "$1"; uci_get_listen_port lp "$1"; [ -n "$lp" ] && [ "${p:0:9}" = "wireguard" ]; }
 is_xray() { [ -n "$(get_xray_traffic_port "$1")" ]; }
+is_xfrm_interface() { local p; network_get_protocol p "$1"; [ "${p:0:4}" = "xfrm" ]; }
+is_xfrm() { ip -o -d link show dev "$1" 2>/dev/null | grep -qw xfrm; }
+is_p2p() { is_point_to_point "$1" || is_xfrm  "$1"; }
 dnsmasq_kill() { pidof dnsmasq >/dev/null && kill -HUP "$(pidof dnsmasq)"; }
 dnsmasq_restart() { output 3 'Restarting dnsmasq '; if /etc/init.d/dnsmasq restart >/dev/null 2>&1; then output_okn; else output_failn; fi; }
 exists_lockfile() { [ -e "$packageLockFile" ]; }
@@ -2345,13 +2349,13 @@ interface_routing() {
 				if [ -n "$gw4" ] || [ -n "$strict_enforcement" ]; then
 					if [ -n "$gw4" ]; then 
 						try ip -4 route replace default via "$gw4" dev "$dev4" table "$tid" || ipv4_error=1
-					elif ip -o link show dev "$dev4" 2>/dev/null | grep -q "POINTOPOINT"; then     # might need to set this rule as first to prevent rogue gateway detection for point-to-point links
+					elif is_p2p "$dev4"; then     # might need to set this rule as first to prevent rogue gateway detection for point-to-point links
 						try ip -4 route replace default dev "$dev4" table "$tid" || ipv4_error=1
 					else
 						try ip -4 route replace unreachable default table "$tid" || ipv4_error=1
 					fi
 					try ip -4 rule replace fwmark "${mark}/${fw_mask}" table "$tid" priority "$priority" || ipv4_error=1
-				elif ip -o link show dev "$dev4" 2>/dev/null | grep -q "POINTOPOINT"; then
+				elif is_p2p "$dev4"; then
 					try ip -4 route replace default dev "$dev4" table "$tid" || ipv4_error=1
 					try ip -4 rule replace fwmark "${mark}/${fw_mask}" table "$tid" priority "$priority" || ipv4_error=1
 				fi
@@ -2371,13 +2375,13 @@ interface_routing() {
 				if [ -n "$gw6" ] || [ -n "$strict_enforcement" ]; then
 					if [ -n "$gw6" ]; then 
 						try ip -6 route replace default via "$gw6" dev "$dev6" table "$tid" metric "$uplink_interface6_metric" || ipv6_error=1
-					elif ip -o link show dev "$dev6" 2>/dev/null | grep -q "POINTOPOINT"; then     # might need to set this rule as first to prevent rogue gateway detection for point-to-point links
+					elif is_p2p "$dev6"; then     # might need to set this rule as first to prevent rogue gateway detection for point-to-point links
 						try ip -6 route replace default dev "$dev6" table "$tid" metric "$uplink_interface6_metric" || ipv6_error=1
 					else
 						try ip -6 route replace unreachable default table "$tid" || ipv6_error=1
 					fi
 					try ip -6 rule replace fwmark "${mark}/${fw_mask}" table "$tid" priority "$priority" || ipv6_error=1
-				elif ip -o link show dev "$dev6" 2>/dev/null | grep -q "POINTOPOINT"; then
+				elif is_p2p "$dev6"; then
 					try ip -6 route replace default dev "$dev6" table "$tid" metric "$uplink_interface6_metric" || ipv6_error=1
 					try ip -6 rule replace fwmark "${mark}/${fw_mask}" table "$tid" priority "$priority" || ipv6_error=1
 				fi
@@ -2432,13 +2436,13 @@ interface_routing() {
 				if [ -n "$gw4" ] || [ -n "$strict_enforcement" ]; then
 					if [ -n "$gw4" ]; then 
 						try ip -4 route replace default via "$gw4" dev "$dev4" table "$tid" || ipv4_error=1
-					elif ip -o link show dev "$dev4" 2>/dev/null | grep -q "POINTOPOINT"; then     # might need to set this rule as first to prevent rogue gateway detection for point-to-point links
+					elif is_p2p "$dev4"; then     # might need to set this rule as first to prevent rogue gateway detection for point-to-point links
 						try ip -4 route replace default dev "$dev4" table "$tid" || ipv4_error=1
 					else
 						try ip -4 route replace unreachable default table "$tid" || ipv4_error=1
 					fi
 					try ip -4 rule replace fwmark "${mark}/${fw_mask}" table "$tid" priority "$priority" || ipv4_error=1
-				elif ip -o link show dev "$dev4" 2>/dev/null | grep -q "POINTOPOINT"; then
+				elif is_p2p "$dev4"; then
 					try ip -4 route replace default dev "$dev4" table "$tid" || ipv4_error=1
 					try ip -4 rule replace fwmark "${mark}/${fw_mask}" table "$tid" priority "$priority" || ipv4_error=1
 				fi
@@ -2458,13 +2462,13 @@ interface_routing() {
 				if [ -n "$gw6" ] || [ -n "$strict_enforcement" ]; then
 					if [ -n "$gw6" ]; then 
 						try ip -6 route replace default via "$gw6" dev "$dev6" table "$tid" metric "$uplink_interface6_metric" || ipv6_error=1
-					elif ip -o link show dev "$dev6" 2>/dev/null | grep -q "POINTOPOINT"; then     # might need to set this rule as first to prevent rogue gateway detection for point-to-point links
+					elif is_p2p "$dev6"; then     # might need to set this rule as first to prevent rogue gateway detection for point-to-point links
 						try ip -6 route replace default dev "$dev6" table "$tid" metric "$uplink_interface6_metric" || ipv6_error=1
 					else
 						try ip -6 route replace unreachable default table "$tid" || ipv6_error=1
 					fi
 					try ip -6 rule replace fwmark "${mark}/${fw_mask}" table "$tid" priority "$priority" || ipv6_error=1
-				elif ip address show dev "$dev6" 2>/dev/null | grep -q "POINTOPOINT"; then
+				elif is_p2p "$dev6"; then
 					try ip -6 route replace default dev "$dev6" table "$tid" metric "$uplink_interface6_metric" || ipv6_error=1
 					try ip -6 rule replace fwmark "${mark}/${fw_mask}" table "$tid" priority "$priority" || ipv6_error=1
 				fi
