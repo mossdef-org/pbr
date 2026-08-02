@@ -314,8 +314,8 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 			let param4 = '', param6 = '';
 			let inline_set_ipv4_empty = false, inline_set_ipv6_empty = false;
 	
-			let dest4 = 'dport 53 dnat ip to ' + dest_dns_ipv4 + ':' + dest_dns_port;
-			let dest6 = 'dport 53 dnat ip6 to ' + dest_dns_ipv6 + ':' + dest_dns_port;
+			let dest4 = 'dport 53 dnat ip to ' + dest_dns_ipv4 + (dest_dns_port ? ':' + dest_dns_port : '');
+			let dest6 = 'dport 53 dnat ip6 to ' + dest_dns_ipv6 + (dest_dns_port ? ':' + dest_dns_port : '');
 	
 			if (src_addr) {
 				let r = nft.classify_addr(src_addr, 'src', null, null, null, false);
