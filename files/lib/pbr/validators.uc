@@ -57,16 +57,17 @@ function is_family_mismatch(a, b) {
 
 function filter_options(opt, values) {
 	if (!values) return '';
+	let is_negative = str_contains(opt, '_negative');
+	let base_opt = is_negative ? replace(opt, '_negative', '') : opt;
 	let parts = split(trim('' + values), /\s+/);
 	let ret = [];
 	for (let v in parts) {
-		if (str_contains(opt, '_negative')) {
-			if (substr('' + v, 0, 1) != '!') continue;
-			opt = replace(opt, '_negative', '');
-		}
-		let check_val = replace(v, '!', '');
+		let negated = (substr('' + v, 0, 1) == '!');
+		if (is_negative && !negated) continue;
+		if (!is_negative && negated) continue;
+		let check_val = negated ? substr('' + v, 1) : '' + v;
 		let ok = false;
-		switch (opt) {
+		switch (base_opt) {
 		case 'phys_dev': ok = is_phys_dev(check_val); break;
 		case 'mac_address': ok = is_mac_address(check_val); break;
 		case 'domain': ok = is_domain(check_val); break;
