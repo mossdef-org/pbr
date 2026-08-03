@@ -293,6 +293,7 @@ function create_nft(fs_mod, config, sh, output, pkg, platform, network, V, state
 			} else {
 				push(state.errors, { code: 'errorNftMainFileInstall', info: pkg.nft_temp_file });
 				output.failn();
+				sh.run('fw4 -q reload');
 				return false;
 			}
 		}
@@ -671,7 +672,7 @@ function create_nft(fs_mod, config, sh, output, pkg, platform, network, V, state
 				let chains = split(pkg.chains_list, ' ');
 				for (let c in [...chains, 'dstnat']) {
 					c = lc(c);
-					nft_call('flush', 'chain', 'inet', pkg.nft_table, c);
+					nft_call('flush', 'chain', 'inet', pkg.nft_table, pkg.nft_prefix + '_' + c);
 				}
 				break;
 			}
