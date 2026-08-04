@@ -1067,6 +1067,7 @@ nft_file() {
 			else
 				json add error 'errorNftMainFileInstall' "$nftTempFile"
 				output_failn
+				fw4 -q reload >/dev/null 2>&1
 			fi
 		;;
 		install:netifd)
@@ -1299,7 +1300,7 @@ cleanup() {
 			main_chains)
 				for i in $chainsList dstnat; do
 					i="$(str_to_lower "$i")"
-					nft_call flush chain inet "$nftTable" "${i}"
+					nft_call flush chain inet "$nftTable" "${nftPrefix}_${i}"
 				done
 			;;
 			marking_chains)
