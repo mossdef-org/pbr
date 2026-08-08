@@ -349,6 +349,15 @@ function create_network(fs_mod, config, sh, pkg, platform, V) {
 				push(webui_parts, value);
 				webui_labels[value] = 'mwan4:strategy:' + strategy;
 			}
+			// Add the Tor pseudo interface. Tor has no corresponding
+			// network.interface section (it redirects via nft dstnat rules,
+			// not device routing), so it can never be discovered by the
+			// foreach() loop above; expose it whenever the package is
+			// installed, mirroring how 'ignore' is always offered.
+			if (!is_ignored_interface('tor') && stat(pkg.tor_config_file)) {
+				push(webui_parts, 'tor');
+				webui_labels['tor'] = 'tor';
+			}
 			push(webui_parts, 'ignore');
 			webui_labels['ignore'] = 'ignore';
 			env.ifaces_supported = join(' ', parts);
