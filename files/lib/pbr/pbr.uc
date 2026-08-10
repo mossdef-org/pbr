@@ -315,7 +315,12 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 			let inline_set_ipv4_empty = false, inline_set_ipv6_empty = false;
 	
 			let dest4 = 'dport 53 dnat ip to ' + dest_dns_ipv4 + (dest_dns_port ? ':' + dest_dns_port : '');
-			let dest6 = 'dport 53 dnat ip6 to ' + dest_dns_ipv6 + (dest_dns_port ? ':' + dest_dns_port : '');
+			// nft requires the IPv6 address to be bracketed when a port follows it.
+			// is_ipv6() only checks for a ':', so dest_dns_ipv6 may already carry
+			// brackets from the config; strip them first to avoid doubling up.
+			let bare_dest_dns_ipv6 = dest_dns_ipv6 ? replace(dest_dns_ipv6, /^\[|\]$/g, '') : dest_dns_ipv6;
+			let dest6 = 'dport 53 dnat ip6 to ' +
+				(dest_dns_port ? '[' + bare_dest_dns_ipv6 + ']:' + dest_dns_port : bare_dest_dns_ipv6);
 	
 			if (src_addr) {
 				let r = nft.classify_addr(src_addr, 'src', null, null, null, false);
