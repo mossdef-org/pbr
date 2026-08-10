@@ -929,6 +929,10 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 				push(state.errors, { code: 'errorInterfaceMarkOverflow', info: iface });
 				return;
 			}
+			if (+_iface_priority <= 0) {
+				push(state.errors, { code: 'errorInterfacePriorityExhausted', info: iface });
+				return;
+			}
 	
 			let dev4 = net.network_get_device(iface);
 			if (!dev4) dev4 = net.network_get_physdev(iface);
@@ -1038,6 +1042,7 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 
 	interface_process.create_global_rules = function() {
 		let prio = '' + iface_priority;
+		let priority_exhausted = false;
 		config.uci_ctx('network').foreach('network', 'interface', function(s_iface) {
 			let name = s_iface['.name'];
 			if (net.is_wg_server(name) && !net.is_ignored_interface(name)) {
@@ -1045,6 +1050,13 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 				let listen_port = config.uci_ctx('network').get('network', name, 'listen_port');
 				if (disabled != '1' && listen_port) {
 					if (cfg.uplink_interface4) {
+						if (+prio <= 0) {
+							if (!priority_exhausted) {
+								push(state.errors, { code: 'errorInterfacePriorityExhausted', info: name });
+								priority_exhausted = true;
+							}
+							return;
+						}
 						let tbl = pkg.ip_table_prefix + '_' + cfg.uplink_interface4;
 						system(pkg.ip_full + ' -4 rule del sport ' + listen_port + ' table ' + tbl + ' priority ' + prio + ' 2>/dev/null');
 						sh.ip('-4', 'rule', 'add', 'sport', listen_port, 'table', tbl, 'priority', prio);
@@ -1057,6 +1069,17 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 				}
 			}
 		});
+		// prio may have been left at <= 0 by the exhaustion guard above: never
+		// issue an 'ip rule' at priority 0, it collides with the kernel's own
+		// 'from all lookup local' rule (see 12b993766718). Bail out the same
+		// way the tail of this function does: iface_priority stays a string,
+		// and the returned 0 is unused, the sole caller ignores it.
+		if (+prio <= 0) {
+			if (!priority_exhausted)
+				push(state.errors, { code: 'errorInterfacePriorityExhausted', info: pkg.name });
+			iface_priority = prio;
+			return 0;
+		}
 		system(pkg.ip_full + ' -4 rule del priority ' + prio + ' 2>/dev/null');
 		system(pkg.ip_full + ' -4 rule del lookup main suppress_prefixlength ' + cfg.prefixlength + ' 2>/dev/null');
 		sh.try_cmd(state.errors, pkg.ip_full, '-4', 'rule', 'add', 'lookup', 'main', 'suppress_prefixlength',

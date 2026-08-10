@@ -9,7 +9,7 @@
 const pkg = {
 	name: 'pbr',
 	version: 'dev-test',
-	compat: '34',
+	compat: '35',
 	config_file: '/etc/config/pbr',
 	debug_file: '/var/run/pbr.debug',
 	lock_file: '/var/run/pbr.lock',
@@ -83,6 +83,7 @@ function get_text(code, cfg, ...args) {
 		errorPolicyProcessUnknownEntry:        sprintf("Unknown entry in policy '%s'", a1),
 		errorInterfaceRoutingEmptyValues:      "Received empty tid/mark or interface name when setting up routing",
 		errorInterfaceMarkOverflow:            sprintf("Interface mark for '%s' exceeds the fwmask value", a1),
+		errorInterfacePriorityExhausted:       sprintf("No IP rule priority left to allocate for '%s'", a1),
 		errorFailedToResolve:                  sprintf("Failed to resolve '%s'", a1),
 		errorInvalidOVPNConfig:                sprintf("Invalid OpenVPN config for '%s' interface", a1),
 		errorNftMainFileInstall:               sprintf("Failed to install fw4 nft file '%s'", a1),
