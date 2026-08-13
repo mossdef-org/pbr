@@ -16,3 +16,6 @@ Allows routing specific traffic (by IP, MAC, port, protocol, or domain) through 
 
 **Full documentation:**  
 [https://docs.mossdef.org/pbr/](https://docs.mossdef.org/pbr/)
+
+**Reference notes:**  
+[docs/tor.md](docs/tor.md) — how Tor routing works in `pbr`, and how to diagnose it when it doesn't.
