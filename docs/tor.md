@@ -148,6 +148,16 @@ udp dport 443 redirect to :9040   # Tor-HTTPS-UDP
 > client — is **never** redirected and leaves through the normal uplink. A Tor
 > policy is not a kill switch; it is a redirect for three ports.
 
+Note the two UDP rules for 80 and 443 do not do what they appear to. Tor's
+`TransPort` accepts **TCP only**, so nothing is listening for the UDP that gets
+redirected to it. The practical effect is to blackhole UDP on those ports rather
+than carry it — which does stop QUIC/HTTP3 on 443 slipping past Tor, but by
+refusing it rather than routing it. Only the TCP rules move traffic through Tor.
+
+The same asymmetry applies at the other end: Tor's `DNSPort` is UDP-only, which
+is why there is no `tcp dport 53` rule to match the UDP one. Adding one would
+redirect TCP DNS to a port that cannot answer it.
+
 ---
 
 ## How traffic gets selected — and what each mode depends on
