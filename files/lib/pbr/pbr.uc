@@ -630,6 +630,41 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 			push(state.errors, { code: 'errorPolicyNoInterface', info: name });
 			output.fail(); return 1;
 		}
+		if (net.is_tor(interface_name)) {
+			// Tor is a dstnat redirect, not a routed interface: the rules below
+			// hardcode ports 53/80/443 and force the dstnat chain, so these
+			// options are silently discarded (src_port additionally produces an
+			// invalid rule). Warn rather than reject -- a dest_addr holding
+			// ordinary resolvable domains is a legitimate Tor policy.
+			//
+			// History: these warnings were live from f532ad3 (2022-12-14) until
+			// d2aba93 (2024-02-16) 'better TOR support in nft', which deleted the
+			// dedicated policy_routing_tor_nft()/_iptables() helpers and folded
+			// Tor into policy_routing(). The call sites went with those helpers
+			// and were never re-added -- confirmed with the maintainer that this
+			// was unintentional rather than a deliberate removal. The catalog
+			// strings were left behind in pkg.uc and status.js, unreachable ever
+			// since. Deliberately not restored verbatim: the old
+			// warningTorUnsetParams also told users to unset src_addr, which that
+			// same refactor turned into the correct way to match a Tor policy, so
+			// its wording is now split per option.
+			//
+			// Deliberately NOT warned about: dest_addr, including '.onion'. A
+			// domain dest_addr is a supported Tor policy and works whenever DNS
+			// for the domain reaches Tor. pbr cannot see whether it does -- that
+			// depends on dnsmasq, which on OpenWrt declares '.onion' local via
+			// /usr/share/dnsmasq/rfc6761.conf -- so any such warning would fire
+			// just as loudly on a correct setup as on a broken one. Documented
+			// instead; see the Tor section of the README.
+			if (src_port)
+				push(state.warnings, { code: 'warningTorUnsetSrcPort', info: name });
+			if (dest_port)
+				push(state.warnings, { code: 'warningTorUnsetDestPort', info: name });
+			if (proto)
+				push(state.warnings, { code: 'warningTorUnsetProto', info: name });
+			if (chain && lc(chain) != 'prerouting')
+				push(state.warnings, { code: 'warningTorUnsetChainNft', info: name });
+		}
 		if (!net.is_supported_interface(interface_name) && !net.is_mwan4_strategy(interface_name)) {
 			push(state.errors, { code: 'errorPolicyUnknownInterface', info: name });
 			output.fail(); return 1;
@@ -2356,7 +2391,6 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		result[name] = {
 			enabled: !!cfg.enabled,
 			running: platform.is_running_nft_file(),
-			running_iptables: false,
 			running_nft: nft.is_service_running_nft(),
 			running_nft_file: platform.is_running_nft_file(),
 			version: pkg.version,

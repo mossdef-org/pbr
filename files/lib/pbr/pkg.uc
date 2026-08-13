@@ -9,7 +9,7 @@
 const pkg = {
 	name: 'pbr',
 	version: 'dev-test',
-	compat: '35',
+	compat: '36',
 	config_file: '/etc/config/pbr',
 	debug_file: '/var/run/pbr.debug',
 	lock_file: '/var/run/pbr.lock',
@@ -111,7 +111,8 @@ function get_text(code, cfg, ...args) {
 		warningInvalidOVPNConfig:              sprintf("Invalid OpenVPN config for '%s' interface", a1),
 		warningResolverNotSupported:           sprintf("Resolver set (%s) is not supported on this system", cfg.resolver_set),
 		warningPolicyProcessCMD:               sprintf("'%s'", a1),
-		warningTorUnsetParams:                 sprintf("Please unset 'src_addr', 'src_port' and 'dest_port' for policy '%s'", a1),
+		warningTorUnsetSrcPort:                sprintf("Please unset 'src_port' for policy '%s': it produces an invalid rule", a1),
+		warningTorUnsetDestPort:               sprintf("Please unset 'dest_port' for policy '%s': it is ignored", a1),
 		warningTorUnsetProto:                  sprintf("Please unset 'proto' or set 'proto' to 'all' for policy '%s'", a1),
 		warningTorUnsetChainNft:               sprintf("Please unset 'chain' or set 'chain' to 'prerouting' for policy '%s'", a1),
 		warningOutdatedLuciPackage:            sprintf("The WebUI application is outdated (version %s), please update it", a1),
