@@ -50,7 +50,7 @@ the name has no public record, so it can only be resolved by Tor itself.
 
 ```
                     answers with a virtual address from
-              ┌──── VirtualAddrNetwork 10.192.0.0/10 ◄─────────┐
+              ┌──── the VirtualAddrNetwork range ◄─────────────┐
               │                                               │
               ▼                                               │
     ┌──────────────┐        ┌─────────────┐          ┌────────────────┐
@@ -404,11 +404,15 @@ problem is in Tor or torrc.
 ### A working reference torrc
 
 ```
-VirtualAddrNetwork 10.192.0.0/10
 AutomapHostsOnResolve 1
+VirtualAddrNetworkIPv4 172.16.0.0/12
 TransPort 0.0.0.0:9040
 DNSPort 0.0.0.0:9053
 ```
+
+This matches what OpenWrt's Tor client guide sets, and what the pbr docs show,
+so following both does not produce a mismatch. Tor's own default is different
+(`127.192.0.0/10`) — see the caution above about not assuming the range.
 
 `AutomapHostsOnResolve` is not optional. Without it Tor's DNSPort will not
 invent an address for a `.onion` name, so there is nothing for the traffic rules
