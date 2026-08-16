@@ -164,6 +164,21 @@ let trace_call = (ns, func, args) => {
 /* Captured file contents from mock writefile — used for readfile/writefile round-trip */
 let _captured = {};
 
+/* Commands passed to system() — used by tests to assert on what was executed */
+let _commands = [];
+
+/* Select recorded commands: everything when needle is null, those containing
+   needle when it is a string, those matching it when it is a regexp. */
+let commands_matching = (needle) => {
+	if (needle == null)
+		return slice(_commands);
+
+	if (type(needle) == "regexp")
+		return filter(_commands, cmd => match(cmd, needle));
+
+	return filter(_commands, cmd => index(cmd, '' + needle) >= 0);
+};
+
 /* Prepend mocklib to REQUIRE_SEARCH_PATH */
 for (let pattern in REQUIRE_SEARCH_PATH) {
 	/* Only consider ucode includes */
@@ -231,11 +246,33 @@ global.mocklib = {
 
 	/* Remove a path from the captured map */
 	delete_captured: (path) => { delete _captured[path]; },
+
+	/* Read the commands system() was called with, in call order (called by
+	   tests to inspect commands that are executed rather than written out).
+	   Returns a copy, so the caller cannot disturb the recording.
+
+	   Pass nothing for the full list, a string to keep only the commands
+	   containing it, or a regexp to keep only the ones matching it. Note
+	   sh.run() appends ' >/dev/null 2>&1' to everything it runs, so match on
+	   substrings or anchored regexps rather than on equality. */
+	commands: commands_matching,
+
+	/* Check whether any recorded command matches — same argument as commands() */
+	has_command: (needle) => length(commands_matching(needle)) > 0,
+
+	/* Drop everything recorded so far, so a test can record one phase at a
+	   time (e.g. clear after start_service() to assert on stop_service()) */
+	clear_commands: () => { _commands = []; },
 };
 
 /* Override stdlib functions */
 global.system = function(argv, timeout) {
 	trace_call(null, "system", { command: argv, timeout });
+
+	/* Record the command for mocklib.commands(). Everything is recorded,
+	   including the '[ -t 2 ]' tty probe below, so the list reflects the
+	   process exactly as it ran. */
+	push(_commands, type(argv) == "array" ? join(' ', argv) : '' + argv);
 
 	/* Return 1 for tty checks so output goes to logger, not stderr */
 	if (type(argv) == "string" && index(argv, "[ -t ") >= 0)
