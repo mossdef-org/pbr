@@ -873,12 +873,19 @@ function create_nft(fs_mod, config, sh, output, pkg, platform, network, V, state
 		return true;
 	};
 
-	resolver.kill = function() {
+	resolver.flush_cache = function() {
 		switch (cfg.resolver_set) {
 		case '':
 		case 'none':
 			return true;
 		case 'dnsmasq.nftset':
+			// A set that was just recreated comes back empty, but dnsmasq only
+			// writes to an nftset on an upstream reply -- it answers from cache
+			// without touching the set, so the policy stays dead until the
+			// record's TTL runs out. SIGHUP drops the cache without restarting
+			// the daemon or losing a query, so the next lookup refills the set.
+			// Only needed when the config was unchanged: a restart clears the
+			// cache anyway. '-q' keeps killall quiet when dnsmasq is not running.
 			if (env.resolver_set_supported)
 				sh.run('killall -q -s HUP dnsmasq');
 			return true;
@@ -924,28 +931,6 @@ function create_nft(fs_mod, config, sh, output, pkg, platform, network, V, state
 			}
 			output.failn();
 			return false;
-		case 'unbound.nftset':
-			return true;
-		}
-		return true;
-	};
-
-	resolver.flush_cache = function() {
-		switch (cfg.resolver_set) {
-		case '':
-		case 'none':
-			return true;
-		case 'dnsmasq.nftset':
-			if (!env.resolver_set_supported) return false;
-			// A set that was just recreated comes back empty, but dnsmasq only
-			// writes to an nftset on an upstream reply -- it answers from cache
-			// without touching the set, so the policy stays dead until the
-			// record's TTL runs out. SIGHUP drops the cache without restarting
-			// the daemon or losing a query, so the next lookup refills the set.
-			// Only needed when the config was unchanged: a restart clears the
-			// cache anyway.
-			sh.run('killall -HUP dnsmasq');
-			return true;
 		case 'unbound.nftset':
 			return true;
 		}
