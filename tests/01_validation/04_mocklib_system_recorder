@@ -5,10 +5,12 @@ mirrors it as a boolean; clear_commands() resets the recording so a test can
 assert on one phase at a time.
 
 The second half runs a real start_service() to show the recorder sees the
-calls that leave no other trace: the nft chain flushes issued through
-sh.run() and the 'ip rule del' loops that call system() directly. Neither
-appears in /var/run/pbr.nft nor in the start_service() result, so before this
-recorder existed there was no way to assert on them at all.
+calls that leave no other trace: the 'fw4 -q reload' issued through sh.run()
+and the 'ip rule del' loops that call system() directly. Neither appears in
+/var/run/pbr.nft nor in the start_service() result, so before this recorder
+existed there was no way to assert on them at all. It also pins the absence
+of a call -- a start must flush no chains, since fw4 rebuilds the table from
+30-pbr.nft and live teardown would leave a window with pbr's chains empty.
 
 -- Testcase --
 import create_pbr from 'pbr';
@@ -53,16 +55,15 @@ let pbr = create_pbr();
 pbr.start_service(['on_start']);
 
 let flushes = mocklib.commands(/^nft flush chain /);
-let bare_flushes = filter(flushes, cmd =>
-	match(cmd, /fw4 (forward|output|prerouting|dstnat) /));
 
 push(checks,
 	// everything system() sees is recorded, including the tty probe
 	['tty_probe_recorded',   mocklib.has_command('[ -t ')],
-	// the item this unblocks: pbr_-prefixed chains only, never fw4's own
-	['pbr_chains_flushed',   length(flushes) == 4],
-	['bare_chains_kept',     length(bare_flushes) == 0],
-	// and the ip rule deletes, which go to system() directly
+	// a command that leaves no other trace: the ruleset swap itself
+	['fw4_reload_recorded',  mocklib.has_command('fw4 -q reload')],
+	// and the absence of one -- nothing is torn down live before that swap
+	['no_chain_flush',       length(flushes) == 0],
+	// the ip rule deletes go to system() directly
 	['rule_delete_recorded', mocklib.has_command('rule del priority 30000')],
 	['no_priority_zero_del', !mocklib.has_command(/rule del priority 0 /)]);
 
