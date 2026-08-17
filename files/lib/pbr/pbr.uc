@@ -1864,7 +1864,19 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		default:
 			nft.resolver.store_hash();
 			nft.resolver.configure();
-			nft.cleanup('main_table', 'rt_tables', 'main_chains', 'sets');
+			// Only the ip-rule/rt_tables state needs tearing down here. The nft
+			// chains and sets must NOT be removed live: everything rebuilt below
+			// is appended to nft_lines and does not reach the kernel until the
+			// 'fw4 -q reload' at the end of nft_file.apply('main'), so deleting
+			// them now leaves a window -- seconds wide on a multi-interface
+			// router -- in which the sets named by dnsmasq's nftset= directives
+			// do not exist. dnsmasq keeps answering across it and logs
+			// 'nftset ... Error: No such file or directory' for every reply that
+			// lands in the gap, and those addresses are never added to the set.
+			// fw4 reload rebuilds the whole inet table atomically from
+			// 30-pbr.nft, so the old chains and sets are replaced regardless --
+			// which is why stop() below likewise cleans only these two.
+			nft.cleanup('main_table', 'rt_tables');
 			nft.nft_file.init('main', iface_registry);
 			output.okn();
 	
@@ -1932,11 +1944,17 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 			}
 	
 			start_time = time();
-			nft.nft_file.apply('main');
+			let nft_applied = nft.nft_file.apply('main');
 			end_time = time();
 			output.logger_debug(cfg.debug_performance, '[PERF-DEBUG] Installing nft rules took ' + (end_time - start_time) + 's');
 
+			// Reap sets orphaned by policies that are gone. Only meaningful once
+			// the new ruleset is live, and skipped when it failed to install,
+			// since the sets still in use are then the previous file's.
+			if (nft_applied) nft.cleanup('orphan_sets');
+
 			if (nft.resolver.compare_hash()) nft.resolver.restart();
+			else nft.resolver.flush_cache();
 			break;
 		}
 	

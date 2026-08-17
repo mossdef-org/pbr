@@ -710,6 +710,51 @@ function create_nft(fs_mod, config, sh, output, pkg, platform, network, V, state
 				}
 				break;
 			}
+			case 'orphan_sets': {
+				// Delete only the sets left behind by policies that no longer
+				// exist, leaving the ones the current ruleset still declares.
+				//
+				// This must run AFTER nft_file.apply('main'), never before it.
+				// fw4 flushes the table's rules but keeps the set objects, so a
+				// stale set survives a reload and would otherwise accumulate
+				// until reboot. Deleting sets up front instead -- as this
+				// function's 'sets' action does -- removes the ones still in use
+				// too, and since every replacement only reaches the kernel with
+				// the 'fw4 -q reload' at the end of apply(), that leaves the
+				// targets of dnsmasq's nftset= directives missing for the whole
+				// rebuild. By the time this runs the new ruleset is live, so an
+				// orphan has no rule referencing it and deletes cleanly rather
+				// than failing with EBUSY.
+				let live = get_nft_sets();
+				if (!live) break;
+				// Sets the ruleset just installed, plus any owned by the netifd
+				// file, which is written separately and must not be reaped here.
+				let keep = {};
+				let set_re = regexp('add set inet ' + pkg.nft_table + '\\s+(\\S+)');
+				for (let line in nft_lines) {
+					let m = match(line, set_re);
+					if (m) keep[m[1]] = true;
+				}
+				for (let line in split(readfile(pkg.nft_netifd_file) || '', '\n')) {
+					let m = match(line, set_re);
+					if (m) keep[m[1]] = true;
+				}
+				// Anything the current ruleset does not declare goes, including
+				// the sets of merely disabled policies. Keeping those would let a
+				// disabled policy resume instantly with its addresses already
+				// resolved, but it is not safe: uci recycles auto-generated
+				// section names, so the uid of a deleted policy can be handed to
+				// a different one, which then generates the identical set name
+				// and would inherit the previous policy's addresses -- silently
+				// routing that traffic to the wrong interface. Reaping on the
+				// same reload the policy disappears leaves nothing to adopt.
+				for (let s in split(live, ' ')) {
+					s = trim(s);
+					if (s && !keep[s])
+						nft_call('delete', 'set', 'inet', pkg.nft_table, s);
+				}
+				break;
+			}
 			}
 		}
 		return true;
@@ -879,6 +924,28 @@ function create_nft(fs_mod, config, sh, output, pkg, platform, network, V, state
 			}
 			output.failn();
 			return false;
+		case 'unbound.nftset':
+			return true;
+		}
+		return true;
+	};
+
+	resolver.flush_cache = function() {
+		switch (cfg.resolver_set) {
+		case '':
+		case 'none':
+			return true;
+		case 'dnsmasq.nftset':
+			if (!env.resolver_set_supported) return false;
+			// A set that was just recreated comes back empty, but dnsmasq only
+			// writes to an nftset on an upstream reply -- it answers from cache
+			// without touching the set, so the policy stays dead until the
+			// record's TTL runs out. SIGHUP drops the cache without restarting
+			// the daemon or losing a query, so the next lookup refills the set.
+			// Only needed when the config was unchanged: a restart clears the
+			// cache anyway.
+			sh.run('killall -HUP dnsmasq');
+			return true;
 		case 'unbound.nftset':
 			return true;
 		}
