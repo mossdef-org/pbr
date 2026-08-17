@@ -164,7 +164,10 @@ let trace_call = (ns, func, args) => {
 /* Captured file contents from mock writefile — used for readfile/writefile round-trip */
 let _captured = {};
 
-/* Commands passed to system() — used by tests to assert on what was executed */
+/* Commands passed to system() — used by tests to assert on what was executed.
+   run_tests.sh spawns one ucode process per testcase, so this starts empty for
+   each and cannot leak into the next; clear_commands() is for asserting a single
+   phase within one run, not for cleaning up after another test. */
 let _commands = [];
 
 /* Select recorded commands: everything when needle is null, those containing
