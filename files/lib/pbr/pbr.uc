@@ -291,6 +291,13 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 	// every rule it emits. classify_addr() keeps the families apart, so an IPv4
 	// exclusion only ever reaches the IPv4 rule and vice versa. 'matched' feeds
 	// the unknown-entry check in the callers.
+	// First word of an address list with the negation markers stripped, used to
+	// read a rule's address family. is_ipv4()/is_ipv6() do not accept a leading
+	// '!', so the markers have to come off before the family is tested.
+	function bare_first_word(raw) {
+		return V.str_first_word(replace('' + (raw || ''), /!/g, ''));
+	}
+
 	function collect_negations(list, addr, direction, iface, uid, name, use_resolver) {
 		let n4 = '', n6 = '', matched = '';
 		if (!addr) return { n4, n6, matched };
@@ -324,8 +331,7 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		// family from, so fall back to the negated entries for the guards below
 		// and let the exclusions themselves decide which families to emit.
 		let raw_src = src_addr || (src_neg ? src_neg.matched : '') || '';
-		let clean_src = raw_src ? replace('' + raw_src, /!/g, '') : '';
-		let first_value = V.str_first_word(clean_src);
+		let first_value = bare_first_word(raw_src);
 		let src_is_v4 = src_addr ? !V.is_ipv6(first_value) : !!(src_neg && src_neg.n4);
 		let src_is_v6 = src_addr ? !V.is_ipv4(first_value) : !!(src_neg && src_neg.n6);
 	
@@ -424,8 +430,8 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		let raw_src = src_addr || (src_neg ? src_neg.matched : '') || '';
 		let raw_dest = dest_addr || (dest_neg ? dest_neg.matched : '') || '';
 		if (!cfg.ipv6_enabled &&
-			(V.is_ipv6(V.str_first_word(replace('' + raw_src, /!/g, ''))) ||
-			 V.is_ipv6(V.str_first_word(replace('' + raw_dest, /!/g, ''))))) {
+			(V.is_ipv6(bare_first_word(raw_src)) ||
+			 V.is_ipv6(bare_first_word(raw_dest)))) {
 			process_policy_error = true;
 			push(state.errors, { code: 'errorPolicyProcessNoIpv6', info: name });
 			return 1;

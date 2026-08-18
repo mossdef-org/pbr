@@ -1168,6 +1168,10 @@ function create_nft(fs_mod, config, sh, output, pkg, platform, network, V, state
 		// different list of domains than the policy's positive group, and both
 		// are keyed on the same uid. Fold the suffix into the uid so the set
 		// that gets created and populated is the very one the rule references.
+		// A falsy uid is passed through untouched: only the resolver branch
+		// below consumes this, and the one caller that passes no uid -- the DNS
+		// path, with use_resolver false -- never reaches it, so there is no set
+		// name to suffix.
 		let set_uid = (uid && nftset_suffix) ? '' + uid + nftset_suffix : uid;
 		let first_val = V.str_first_word(value);
 		let param4 = '', param6 = '';

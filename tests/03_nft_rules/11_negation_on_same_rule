@@ -30,6 +30,7 @@ if (nft_content) {
 		index(l, '"' + comment + '"') >= 0);
 	let has = (rules, needle) => length(filter(rules, l => index(l, needle) >= 0));
 
+	// ── policy_mixed: three positive types, a MAC exclusion and an IPv4 one ──
 	let mixed = rules_for('Mixed');
 
 	// One rule per positive group, with the family-agnostic ones (@br-lan and
@@ -67,22 +68,24 @@ if (nft_content) {
 	push(checks, ['mixed_ipv4_group_not_pinned',
 		length(v4_group) == 1 && index(v4_group[0], 'meta nfproto') < 0]);
 
-	// Exclusions with no positive entry still describe one rule -- "every
-	// source but this one" -- and only for the family that has an exclusion.
+	// ── policy_negonly: src_addr is a single exclusion and nothing else ──
+	// It still describes one rule -- "every source but this one" -- and only
+	// for the family that has an exclusion.
 	let negonly = rules_for('NegOnly');
 	push(checks, ['negonly_single_rule', length(negonly) == 1]);
 	push(checks, ['negonly_carries_exclusion', has(negonly, 'ip saddr != { 10.0.0.99 }') == 1]);
 	push(checks, ['negonly_not_pinned', index(negonly[0], 'meta nfproto') < 0]);
 
-	// dest_addr exclusions ride along the same way.
+	// ── policy_dest: the exclusion is on dest_addr, not src_addr ──
 	let destneg = rules_for('DestNeg');
 	push(checks, ['destneg_single_rule', length(destneg) == 1]);
 	push(checks, ['destneg_positive_and_exclusion',
 		index(destneg[0], 'ip daddr { 10.10.0.0/16 }') >= 0 &&
 		index(destneg[0], 'ip daddr != { 10.10.5.5 }') >= 0]);
 
-	// A negated domain gets its own resolver set, and the set the rule points
-	// at has to be the one that actually gets created and populated.
+	// ── policy_domain: a negated domain name, so a resolver set is involved ──
+	// It gets a set of its own, and the set the rule points at has to be the
+	// one that actually gets created and populated.
 	let domneg = rules_for('DomainNeg');
 	push(checks, ['domainneg_single_rule', length(domneg) == 1]);
 	push(checks, ['domainneg_refs_neg_set',
