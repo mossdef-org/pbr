@@ -1952,6 +1952,9 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 			// the new ruleset is live, and skipped when it failed to install,
 			// since the sets still in use are then the previous file's.
 			if (nft_applied) nft.cleanup('orphan_sets');
+			// Before the restart below, so addresses re-resolved after it are
+			// not wiped by a flush that follows.
+			if (nft_applied) nft.resolver.flush_changed();
 
 			if (nft.resolver.compare_hash()) nft.resolver.restart();
 			else nft.resolver.flush_cache();
