@@ -1065,6 +1065,14 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 	
 	// ── Enumerate Interfaces ────────────────────────────────────────────
 	
+	// The mark chain's name is derived from the mark, so the two must be kept in
+	// step: an interface whose mark is reassigned after the name was built ends up
+	// naming another interface's chain, or one nobody creates. Deriving both from
+	// here makes that structural rather than something each branch remembers.
+	function mark_chain_name(mark) {
+		return pkg.nft_prefix + '_mark_' + mark;
+	}
+
 	function interface_enumerate() {
 		config.uci_ctx('network', true);
 	
@@ -1099,13 +1107,13 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 			if (!dev6) dev6 = dev4;
 	
 			let _mark = iface_mark;
-			let _chain_name = pkg.nft_prefix + '_mark_' + _mark;
+			let _chain_name = mark_chain_name(_mark);
 			let _priority = _iface_priority;
 			let split_uplink_second = false;
 	
 			if (net.is_netifd_interface(iface) && env.netifd_mark[iface]) {
 				_mark = env.netifd_mark[iface];
-				_chain_name = pkg.nft_prefix + '_mark_' + _mark;
+				_chain_name = mark_chain_name(_mark);
 			} else if (net.is_mwan4_interface(iface) && env.mwan4_mark[iface]) {
 				_mark = env.mwan4_mark[iface];
 				_chain_name = env.mwan4_interface_chain[iface];
@@ -1121,7 +1129,7 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 						// traffic out that interface -- or, when no interface
 						// owns it, names a chain nobody creates, which fails
 						// the ruleset check and installs nothing at all.
-						_chain_name = pkg.nft_prefix + '_mark_' + _mark;
+						_chain_name = mark_chain_name(_mark);
 						_priority = _uplink_priority;
 						split_uplink_second = true;
 					} else {
