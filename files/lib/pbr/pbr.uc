@@ -4,6 +4,10 @@
 //
 // Entry point: module wiring, service lifecycle, policy processing,
 // interface routing, netifd integration, status/rpcd.
+//
+// Two ucode divergences from JavaScript that bite here: for-in over an array
+// yields its values, not its indices (there is no for-of), and function
+// declarations are not hoisted, so a helper must appear before its callers.
 
 // ── Constants & Sub-module Factories ────────────────────────────────
 

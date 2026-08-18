@@ -1172,7 +1172,8 @@ function create_nft(fs_mod, config, sh, output, pkg, platform, network, V, state
 		// below consumes this, and the one caller that passes no uid -- the DNS
 		// path, with use_resolver false -- never reaches it, so there is no set
 		// name to suffix.
-		let set_uid = (uid && nftset_suffix) ? '' + uid + nftset_suffix : uid;
+		let set_uid = uid;
+		if (uid && nftset_suffix) set_uid = '' + uid + nftset_suffix;
 		let first_val = V.str_first_word(value);
 		let param4 = '', param6 = '';
 		let empty4 = false, empty6 = false;
