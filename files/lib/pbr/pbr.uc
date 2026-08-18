@@ -1069,6 +1069,13 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 	// step: an interface whose mark is reassigned after the name was built ends up
 	// naming another interface's chain, or one nobody creates. Deriving both from
 	// here makes that structural rather than something each branch remembers.
+	//
+	// 'mark' is a '0x%06x' string. Every caller is already guaranteed one: it is
+	// either iface_mark, built by sprintf() below, or a netifd/mwan4 mark reached
+	// only through a branch that has tested it for truth. No coercion or fallback
+	// here on purpose -- a sentinel name would be created by nobody and routed to
+	// by nothing, turning a loud failure into the silent misroute this exists to
+	// prevent.
 	function mark_chain_name(mark) {
 		return pkg.nft_prefix + '_mark_' + mark;
 	}
