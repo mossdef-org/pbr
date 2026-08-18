@@ -1,5 +1,30 @@
 let mocklib = global.mocklib; // ucode-lsp disable
 
+let stat_path = function(path) { // ucode-lsp disable
+	/* Check captured content first */
+	if (mocklib.has_captured(path)) {
+		mocklib.trace_call("fs", "stat", { path, source: "captured" });
+		return { type: "file", size: length(mocklib.read_captured(path)) };
+	}
+
+	let file = sprintf("fs/stat~%s.json", replace(path, /[^A-Za-z0-9_-]+/g, '_')),
+	    mock = mocklib.read_json_file(file);
+
+	if (!mock || mock != mock) {
+		/* No fixture: return null to indicate "not found" by default.
+		 * For paths that look like directories, return directory type. */
+		if (match(path, /\/$/))
+			return { type: "directory" };
+		/* Most stat() calls in pbr check for existence — return null
+		 * unless there's a specific mock or captured content. */
+		return null;
+	}
+
+	mocklib.trace_call("fs", "stat", { path });
+
+	return mock;
+};
+
 return {
 	readfile: function(path, limit) {
 		/* Check captured content first (from mock writefile) */
@@ -83,30 +108,12 @@ return {
 		};
 	},
 
-	stat: function(path) {
-		/* Check captured content first */
-		if (mocklib.has_captured(path)) {
-			mocklib.trace_call("fs", "stat", { path, source: "captured" });
-			return { type: "file", size: length(mocklib.read_captured(path)) };
-		}
+	stat: stat_path,
 
-		let file = sprintf("fs/stat~%s.json", replace(path, /[^A-Za-z0-9_-]+/g, '_')),
-		    mock = mocklib.read_json_file(file);
-
-		if (!mock || mock != mock) {
-			/* No fixture: return null to indicate "not found" by default.
-			 * For paths that look like directories, return directory type. */
-			if (match(path, /\/$/))
-				return { type: "directory" };
-			/* Most stat() calls in pbr check for existence — return null
-			 * unless there's a specific mock or captured content. */
-			return null;
-		}
-
-		mocklib.trace_call("fs", "stat", { path });
-
-		return mock;
-	},
+	/* is_phys_dev() probes /sys/class/net/<dev> with lstat() because the entry
+	   is a symlink. pbr passes fs.lstat around as a bare function reference, so
+	   it must not depend on a receiver; fixtures are shared with stat(). */
+	lstat: stat_path,
 
 	unlink: function(path) {
 		mocklib.delete_captured(path);

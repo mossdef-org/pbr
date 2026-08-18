@@ -278,9 +278,36 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		return true;
 	}
 	
+	// ── Address Exclusions ──────────────────────────────────────────────
+	
+	// nft has no OR between the match expressions of a rule, so every positive
+	// address type a policy names needs a rule of its own -- that is what makes
+	// src_addr/dest_addr a union of sources. Negated entries are the opposite:
+	// they are AND terms and belong ON those rules. Given a rule of its own a
+	// '!10.0.0.22' reads as "everything except 10.0.0.22", a catch-all that
+	// swallows exactly the traffic the policy was meant to leave alone.
+	//
+	// Resolve a policy's negated groups once, into the fragments appended to
+	// every rule it emits. classify_addr() keeps the families apart, so an IPv4
+	// exclusion only ever reaches the IPv4 rule and vice versa. 'matched' feeds
+	// the unknown-entry check in the callers.
+	function collect_negations(list, addr, direction, iface, uid, name, use_resolver) {
+		let n4 = '', n6 = '', matched = '';
+		if (!addr) return { n4, n6, matched };
+		for (let fg in split(list, /\s+/)) {
+			let fv = V.filter_options(fg, addr);
+			if (!fv) continue;
+			matched += (matched ? ' ' : '') + fv;
+			let r = nft.classify_addr(fv, direction, iface, uid, name, use_resolver);
+			if (r.param4 && !r.empty4) n4 += (n4 ? ' ' : '') + r.param4;
+			if (r.param6 && !r.empty6) n6 += (n6 ? ' ' : '') + r.param6;
+		}
+		return { n4, n6, matched };
+	}
+	
 	// ── DNS Policy Routing ──────────────────────────────────────────────
 	
-	function dns_policy_routing(name, src_addr, dest_dns, uid, dest_dns_port, dest_dns_ipv4, dest_dns_ipv6) {
+	function dns_policy_routing(name, src_addr, dest_dns, uid, dest_dns_port, dest_dns_ipv4, dest_dns_ipv6, src_neg) {
 		let nft_insert = 'add';
 		let protos = ['tcp', 'udp'];
 		let chain = 'dstnat';
@@ -293,22 +320,28 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 			return 1;
 		}
 	
-		if (!cfg.ipv6_enabled && V.is_ipv6(V.str_first_word(src_addr))) {
+		// A rule built from exclusions alone has no positive source to take its
+		// family from, so fall back to the negated entries for the guards below
+		// and let the exclusions themselves decide which families to emit.
+		let raw_src = src_addr || (src_neg ? src_neg.matched : '') || '';
+		let clean_src = raw_src ? replace('' + raw_src, /!/g, '') : '';
+		let first_value = V.str_first_word(clean_src);
+		let src_is_v4 = src_addr ? !V.is_ipv6(first_value) : !!(src_neg && src_neg.n4);
+		let src_is_v6 = src_addr ? !V.is_ipv4(first_value) : !!(src_neg && src_neg.n6);
+	
+		if (!cfg.ipv6_enabled && V.is_ipv6(first_value)) {
 			process_dns_policy_error = true;
 			push(state.errors, { code: 'errorPolicyProcessNoIpv6', info: name });
 			return 1;
 		}
 	
-		if ((V.is_ipv4(V.str_first_word(src_addr)) && !dest_dns_ipv4) ||
-			(V.is_ipv6(V.str_first_word(src_addr)) && !dest_dns_ipv6)) {
+		if ((V.is_ipv4(first_value) && !dest_dns_ipv4) ||
+			(V.is_ipv6(first_value) && !dest_dns_ipv6)) {
 			process_dns_policy_error = true;
 			push(state.errors, { code: 'errorPolicyProcessMismatchFamily',
-				info: name + ": '" + src_addr + "' '" + dest_dns + "':'" + dest_dns_port + "'" });
+				info: name + ": '" + raw_src + "' '" + dest_dns + "':'" + dest_dns_port + "'" });
 			return 1;
 		}
-	
-		let clean_src = src_addr ? ((substr(src_addr, 0, 1) == '!') ? replace(src_addr, /!/g, '') : src_addr) : '';
-		let first_value = V.str_first_word(clean_src);
 	
 		for (let proto_i in protos) {
 			let param4 = '', param6 = '';
@@ -328,6 +361,18 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 				param6 = r.param6;
 				inline_set_ipv4_empty = r.empty4;
 				inline_set_ipv6_empty = r.empty6;
+			} else if (src_neg && (src_neg.n4 || src_neg.n6)) {
+				// Exclusions with no positive source: suppress the family that
+				// carries none of them, or its rule would match every packet.
+				inline_set_ipv4_empty = !src_neg.n4;
+				inline_set_ipv6_empty = !src_neg.n6;
+			}
+	
+			// DNS rules already pin their family with 'meta nfproto', so the
+			// exclusions can just be appended to the rule they belong to.
+			if (src_neg) {
+				if (src_neg.n4) param4 += (param4 ? ' ' : '') + src_neg.n4;
+				if (src_neg.n6) param6 += (param6 ? ' ' : '') + src_neg.n6;
 			}
 	
 			let rule_params = cfg._nft_rule_params ? ' ' + cfg._nft_rule_params : '';
@@ -340,12 +385,12 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 	
 			let ipv4_error = false, ipv6_error = false;
 			if (pbr_nft_prev_param4 != param4 && first_value &&
-				!V.is_ipv6(first_value) && !inline_set_ipv4_empty && dest_dns_ipv4) {
+				src_is_v4 && !inline_set_ipv4_empty && dest_dns_ipv4) {
 				if (!nft.nft4(param4)) ipv4_error = true;
 				pbr_nft_prev_param4 = param4;
 			}
 			if (pbr_nft_prev_param6 != param6 && param4 != param6 &&
-				first_value && !V.is_ipv4(first_value) && !inline_set_ipv6_empty && dest_dns_ipv6) {
+				first_value && src_is_v6 && !inline_set_ipv6_empty && dest_dns_ipv6) {
 				if (!nft.nft6(param6)) ipv6_error = true;
 				pbr_nft_prev_param6 = param6;
 			}
@@ -365,7 +410,7 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 	
 	// ── Policy Routing ──────────────────────────────────────────────────
 	
-	function policy_routing(name, iface, src_addr, src_port, dest_addr, dest_port, proto, chain, uid) {
+	function policy_routing(name, iface, src_addr, src_port, dest_addr, dest_port, proto, chain, uid, src_neg, dest_neg) {
 		let nft_insert = 'add';
 		let nft_table = pkg.nft_table;
 		let nft_prefix = pkg.nft_prefix;
@@ -374,8 +419,13 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		proto = lc(proto || '');
 		chain = lc(chain || '') || 'prerouting';
 	
+		// A rule built from exclusions alone still has a family; read it off the
+		// negated entries when there is no positive address to read it from.
+		let raw_src = src_addr || (src_neg ? src_neg.matched : '') || '';
+		let raw_dest = dest_addr || (dest_neg ? dest_neg.matched : '') || '';
 		if (!cfg.ipv6_enabled &&
-			(V.is_ipv6(V.str_first_word(src_addr)) || V.is_ipv6(V.str_first_word(dest_addr)))) {
+			(V.is_ipv6(V.str_first_word(replace('' + raw_src, /!/g, ''))) ||
+			 V.is_ipv6(V.str_first_word(replace('' + raw_dest, /!/g, ''))))) {
 			process_policy_error = true;
 			push(state.errors, { code: 'errorPolicyProcessNoIpv6', info: name });
 			return 1;
@@ -448,6 +498,11 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 				param6 = r.param6;
 				src_inline_set_ipv4_empty = r.empty4;
 				src_inline_set_ipv6_empty = r.empty6;
+			} else if (src_neg && (src_neg.n4 || src_neg.n6)) {
+				// Exclusions with no positive source: suppress the family that
+				// carries none of them, or its rule would match every packet.
+				src_inline_set_ipv4_empty = !src_neg.n4;
+				src_inline_set_ipv6_empty = !src_neg.n6;
 			}
 	
 			if (dest_addr) {
@@ -456,7 +511,31 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 				param6 += (param6 ? ' ' : '') + r.param6;
 				dest_inline_set_ipv4_empty = r.empty4;
 				dest_inline_set_ipv6_empty = r.empty6;
+			} else if (dest_neg && (dest_neg.n4 || dest_neg.n6)) {
+				dest_inline_set_ipv4_empty = !dest_neg.n4;
+				dest_inline_set_ipv6_empty = !dest_neg.n6;
 			}
+	
+			// An interface or MAC match (and an absent one) reads the same for
+			// both families, so only one rule is emitted for it. A family-
+			// specific exclusion breaks that: the IPv6 copy would carry no
+			// exclusion and re-admit the very IPv4 packets the IPv4 copy just
+			// filtered out. Pin each copy to its family before appending. An
+			// empty positive match needs no guard: the family that carries no
+			// exclusion is already suppressed above.
+			let family_agnostic = (param4 == param6 && param4 != '');
+			let neg4 = src_neg ? src_neg.n4 : '';
+			let neg6 = src_neg ? src_neg.n6 : '';
+			if (dest_neg) {
+				if (dest_neg.n4) neg4 += (neg4 ? ' ' : '') + dest_neg.n4;
+				if (dest_neg.n6) neg6 += (neg6 ? ' ' : '') + dest_neg.n6;
+			}
+			if (family_agnostic && neg4 != neg6) {
+				param4 = 'meta nfproto ipv4' + (param4 ? ' ' + param4 : '');
+				param6 = 'meta nfproto ipv6' + (param6 ? ' ' + param6 : '');
+			}
+			if (neg4) param4 += (param4 ? ' ' : '') + neg4;
+			if (neg6) param6 += (param6 ? ' ' : '') + neg6;
 	
 			if (src_port) {
 				let negation = '', value = src_port;
@@ -592,15 +671,22 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 			output.fail(); return 1;
 		}
 	
-		let filter_list = 'phys_dev phys_dev_negative mac_address mac_address_negative domain domain_negative ipv4 ipv4_negative ipv6 ipv6_negative';
+		let filter_list = 'phys_dev mac_address domain ipv4 ipv6';
+		let neg_list = 'phys_dev_negative mac_address_negative domain_negative ipv4_negative ipv6_negative';
+		let src_neg = collect_negations(neg_list, src_addr, 'src', null, null, name, false);
+		let has_positive = false;
 		for (let fg in split(filter_list, /\s+/)) {
 			let filtered = V.filter_options(fg, src_addr);
-			if (src_addr && filtered) {
-				if (V.str_contains(fg, 'ipv4') && !dest_dns_ipv4) continue;
-				if (V.str_contains(fg, 'ipv6') && !dest_dns_ipv6) continue;
-				dns_policy_routing(name, filtered, dest_dns, uid, dest_dns_port, dest_dns_ipv4, dest_dns_ipv6);
-			}
+			if (!filtered) continue;
+			has_positive = true;
+			if (V.str_contains(fg, 'ipv4') && !dest_dns_ipv4) continue;
+			if (V.str_contains(fg, 'ipv6') && !dest_dns_ipv6) continue;
+			dns_policy_routing(name, filtered, dest_dns, uid, dest_dns_port, dest_dns_ipv4, dest_dns_ipv6, src_neg);
 		}
+		// Nothing but exclusions in src_addr: emit the single rule they describe,
+		// 'every source but these'.
+		if (!has_positive && (src_neg.n4 || src_neg.n6))
+			dns_policy_routing(name, '', dest_dns, uid, dest_dns_port, dest_dns_ipv4, dest_dns_ipv6, src_neg);
 	
 		if (process_dns_policy_error) output.fail();
 		else output.ok();
@@ -686,25 +772,46 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		}
 		dest_addr = join(' ', j_parts);
 	
-		let filter_list_src = 'phys_dev phys_dev_negative mac_address mac_address_negative domain domain_negative ipv4 ipv4_negative ipv6 ipv6_negative';
-		let filter_list_dest = 'domain domain_negative ipv4 ipv4_negative ipv6 ipv6_negative';
+		let filter_list_src = 'phys_dev mac_address domain ipv4 ipv6';
+		let filter_list_dest = 'domain ipv4 ipv6';
+		let neg_list_src = 'phys_dev_negative mac_address_negative domain_negative ipv4_negative ipv6_negative';
+		let neg_list_dest = 'domain_negative ipv4_negative ipv6_negative';
 		let processed_src = '', processed_dest = '';
 	
-		if (!src_addr) filter_list_src = 'none';
-		for (let fg_src in split(filter_list_src, /\s+/)) {
-			let fv_src = V.filter_options(fg_src, src_addr);
-			if (!src_addr || (src_addr && fv_src)) {
-				let fl_dest = dest_addr ? filter_list_dest : 'none';
-				for (let fg_dest in split(fl_dest, /\s+/)) {
-					let fv_dest = V.filter_options(fg_dest, dest_addr);
-					if (!dest_addr || (dest_addr && fv_dest)) {
-						if (V.str_contains(fg_src, 'ipv4') && V.str_contains(fg_dest, 'ipv6')) continue;
-						if (V.str_contains(fg_src, 'ipv6') && V.str_contains(fg_dest, 'ipv4')) continue;
-						policy_routing(name, interface_name, fv_src, src_port, fv_dest, dest_port, proto, chain, uid);
-						processed_src += (processed_src ? ' ' : '') + (fv_src || '');
-						processed_dest += (processed_dest ? ' ' : '') + (fv_dest || '');
-					}
-				}
+		// One rule per positive group -- they are the policy's union of sources.
+		let src_groups = [], dest_groups = [];
+		for (let fg in split(filter_list_src, /\s+/)) {
+			let fv = src_addr ? V.filter_options(fg, src_addr) : '';
+			if (!fv) continue;
+			push(src_groups, { fg, fv });
+			processed_src += (processed_src ? ' ' : '') + fv;
+		}
+		for (let fg in split(filter_list_dest, /\s+/)) {
+			let fv = dest_addr ? V.filter_options(fg, dest_addr) : '';
+			if (!fv) continue;
+			push(dest_groups, { fg, fv });
+			processed_dest += (processed_dest ? ' ' : '') + fv;
+		}
+	
+		// The exclusions ride along on each of those rules instead of getting
+		// rules of their own.
+		let src_neg = collect_negations(neg_list_src, src_addr, 'src', interface_name, uid, name, true);
+		let dest_neg = collect_negations(neg_list_dest, dest_addr, 'dst', interface_name, uid, name, true);
+		if (src_neg.matched) processed_src += (processed_src ? ' ' : '') + src_neg.matched;
+		if (dest_neg.matched) processed_dest += (processed_dest ? ' ' : '') + dest_neg.matched;
+	
+		// No positive entries of a given side (none configured, or nothing but
+		// exclusions) still yields one rule for that side, carrying whatever
+		// exclusions it has.
+		if (!length(src_groups)) push(src_groups, { fg: 'none', fv: '' });
+		if (!length(dest_groups)) push(dest_groups, { fg: 'none', fv: '' });
+	
+		for (let s in src_groups) {
+			for (let d in dest_groups) {
+				if (V.str_contains(s.fg, 'ipv4') && V.str_contains(d.fg, 'ipv6')) continue;
+				if (V.str_contains(s.fg, 'ipv6') && V.str_contains(d.fg, 'ipv4')) continue;
+				policy_routing(name, interface_name, s.fv, src_port, d.fv, dest_port,
+					proto, chain, uid, src_neg, dest_neg);
 			}
 		}
 	

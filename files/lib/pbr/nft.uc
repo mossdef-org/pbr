@@ -1164,6 +1164,11 @@ function create_nft(fs_mod, config, sh, output, pkg, platform, network, V, state
 			value = replace(value, /!/g, '');
 			nftset_suffix = '_neg';
 		}
+		// The negated group of a policy needs its own resolver set: it holds a
+		// different list of domains than the policy's positive group, and both
+		// are keyed on the same uid. Fold the suffix into the uid so the set
+		// that gets created and populated is the very one the rule references.
+		let set_uid = (uid && nftset_suffix) ? '' + uid + nftset_suffix : uid;
 		let first_val = V.str_first_word(value);
 		let param4 = '', param6 = '';
 		let empty4 = false, empty6 = false;
@@ -1180,13 +1185,12 @@ function create_nft(fs_mod, config, sh, output, pkg, platform, network, V, state
 			param6 = param4;
 		} else if (V.is_domain(first_val)) {
 			if (use_resolver && iface &&
-				resolver.create_set(iface, target, 'ip', uid, name) &&
-				resolver.add_element(iface, target, 'ip', uid, name, value)) {
-				let nft_pfx = pkg.nft_prefix;
+				resolver.create_set(iface, target, 'ip', set_uid, name) &&
+				resolver.add_element(iface, target, 'ip', set_uid, name, value)) {
 				param4 = pkg.nft_ipv4_flag + ' ' + addr_dir + ' ' + negation +
-					'@' + nft_pfx + '_' + iface + '_4_' + target + '_ip_' + uid + nftset_suffix;
+					'@' + get_set_name(iface, '4', target, 'ip', set_uid);
 				param6 = pkg.nft_ipv6_flag + ' ' + addr_dir + ' ' + negation +
-					'@' + nft_pfx + '_' + iface + '_6_' + target + '_ip_' + uid + nftset_suffix;
+					'@' + get_set_name(iface, '6', target, 'ip', set_uid);
 			} else {
 				let is4 = '', is6 = '';
 				for (let d in split(value, /\s+/)) {
