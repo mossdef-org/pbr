@@ -1113,6 +1113,15 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 				if (net.is_uplink4(iface) || net.is_uplink6(iface)) {
 					if (_uplink_mark && _uplink_priority) {
 						_mark = _uplink_mark;
+						// The chain name is derived from the mark above, so it
+						// has to follow the mark here as it does in the netifd
+						// and mwan4 branches. Left stale, the second uplink
+						// names the chain of whichever interface really owns
+						// the mark it no longer uses -- silently routing its
+						// traffic out that interface -- or, when no interface
+						// owns it, names a chain nobody creates, which fails
+						// the ruleset check and installs nothing at all.
+						_chain_name = pkg.nft_prefix + '_mark_' + _mark;
 						_priority = _uplink_priority;
 						split_uplink_second = true;
 					} else {
