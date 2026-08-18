@@ -806,11 +806,13 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		if (!length(src_groups)) push(src_groups, { fg: 'none', fv: '' });
 		if (!length(dest_groups)) push(dest_groups, { fg: 'none', fv: '' });
 	
-		for (let s in src_groups) {
-			for (let d in dest_groups) {
-				if (V.str_contains(s.fg, 'ipv4') && V.str_contains(d.fg, 'ipv6')) continue;
-				if (V.str_contains(s.fg, 'ipv6') && V.str_contains(d.fg, 'ipv4')) continue;
-				policy_routing(name, interface_name, s.fv, src_port, d.fv, dest_port,
+		// ucode's for-in yields an array's values, not its indices, so each of
+		// these is the { fg, fv } pushed above.
+		for (let src_group in src_groups) {
+			for (let dest_group in dest_groups) {
+				if (V.str_contains(src_group.fg, 'ipv4') && V.str_contains(dest_group.fg, 'ipv6')) continue;
+				if (V.str_contains(src_group.fg, 'ipv6') && V.str_contains(dest_group.fg, 'ipv4')) continue;
+				policy_routing(name, interface_name, src_group.fv, src_port, dest_group.fv, dest_port,
 					proto, chain, uid, src_neg, dest_neg);
 			}
 		}
