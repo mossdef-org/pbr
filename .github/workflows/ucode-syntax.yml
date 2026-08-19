@@ -1,4 +1,4 @@
-# Compile every .uc file with the OLDEST ucode pbr must support.
+# Compile every .uc file with the OLDEST ucode pbr must support. MANUAL ONLY.
 #
 # Newer ucode accepts everything older accepts, so a build that works on master
 # says nothing about the routers people run. This gate is deliberately pointed
@@ -14,17 +14,12 @@
 # form, so expand it before pasting it here.
 name: ucode syntax (oldest supported)
 
+# Manual only. CI minutes are scarce here, and the check earns its keep on
+# contributions from machines with a modern ucode -- where `{ foo() {...} }` and
+# `export function f() {}` work perfectly and break every 25.12 router. Run it
+# from the Actions tab when a PR touches .uc files, or locally with
+# `tests/check-ucode-syntax.sh <path-to-old-ucode>`.
 on:
-  push:
-    paths:
-      - '**/*.uc'
-      - 'tests/check-ucode-syntax.sh'
-      - '.github/workflows/ucode-syntax.yml'
-  pull_request:
-    paths:
-      - '**/*.uc'
-      - 'tests/check-ucode-syntax.sh'
-      - '.github/workflows/ucode-syntax.yml'
   workflow_dispatch:
 
 jobs:
