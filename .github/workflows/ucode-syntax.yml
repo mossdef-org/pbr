@@ -7,6 +7,11 @@
 # UCODE_REF is the ucode shipped by OpenWrt 25.12 (package version
 # 2026.01.16~85922056). Bump it only when the oldest SUPPORTED OpenWrt release
 # moves — not when master moves.
+#
+# It MUST be the full 40-character SHA. `git fetch --depth 1 origin <sha>`
+# resolves an object id, not a ref, and an abbreviated hash fails with
+# "couldn't find remote ref". The OpenWrt package version only shows the short
+# form, so expand it before pasting it here.
 name: ucode syntax (oldest supported)
 
 on:
@@ -26,7 +31,7 @@ jobs:
   syntax:
     runs-on: ubuntu-latest
     env:
-      UCODE_REF: 85922056
+      UCODE_REF: 85922056ef7abeace3cca3ab28bc1ac2d88e31b1
       UCODE_REPO: https://github.com/jow-/ucode.git
     steps:
       - uses: actions/checkout@v4
