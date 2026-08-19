@@ -45,12 +45,22 @@ echo "canary: correctly rejected (check is live)"
 
 n=0; bad=0
 
-# Read the file list from a temp file rather than a pipeline: a `find | while`
-# pipeline runs the loop in a subshell under POSIX sh, and the counters below
-# would be lost when it exits. Redirecting from a file keeps the loop in this
-# shell. (Filenames containing newlines would still break this; none do, and
-# `find -print0` needs `read -d` which is not POSIX.)
-find "$ROOT" -name '*.uc' | sort > "$TMP/files.txt"
+# List only files the REPOSITORY owns. `find` over the working tree also picks
+# up anything else that happens to be there -- CI clones the ucode source into
+# the workspace, and upstream's own tests/custom/*.uc are not ours to compile.
+# git ls-files covers tracked plus untracked-but-not-ignored, so a new file is
+# still checked before it is committed.
+if git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+	git -C "$ROOT" ls-files --cached --others --exclude-standard '*.uc' \
+		| sed "s|^|$ROOT/|" | sort > "$TMP/files.txt"
+else
+	find "$ROOT" -name '*.uc' | sort > "$TMP/files.txt"
+fi
+
+# Read from a file rather than a pipeline: a `find | while` pipeline runs the
+# loop in a subshell under POSIX sh, and the counters below would be lost when
+# it exits. (Filenames containing newlines would still break this; none do, and
+# `find -print0` needs `read -d`, which is not POSIX.)
 
 while IFS= read -r f; do
 	[ -n "$f" ] || continue

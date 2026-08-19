@@ -41,12 +41,15 @@ jobs:
         id: ucode-cache
         uses: actions/cache@v4
         with:
-          path: ucode-build
+          path: ${{ runner.temp }}/ucode-build
           key: ucode-${{ env.UCODE_REF }}-${{ runner.os }}
 
       - name: Build ucode at the oldest supported revision
         if: steps.ucode-cache.outputs.cache-hit != 'true'
         run: |
+          # Build outside the checkout: anything left in the workspace would be
+          # swept up by the file scan below.
+          cd "$RUNNER_TEMP"
           git init -q ucode-src && cd ucode-src
           git remote add origin "$UCODE_REPO"
           git fetch -q --depth 1 origin "$UCODE_REF"
@@ -59,4 +62,4 @@ jobs:
           cmake --build ucode-build -j"$(nproc)"
 
       - name: Compile every .uc file
-        run: tests/check-ucode-syntax.sh "$PWD/ucode-build/ucode"
+        run: tests/check-ucode-syntax.sh "$RUNNER_TEMP/ucode-build/ucode"
