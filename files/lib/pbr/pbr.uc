@@ -1236,10 +1236,10 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 							return;
 						}
 						let tbl = pkg.ip_table_prefix + '_' + cfg.uplink_interface4;
-						system(pkg.ip_full + ' -4 rule del sport ' + listen_port + ' table ' + tbl + ' priority ' + prio + ' 2>/dev/null');
+						system(pkg.ip_full + ' -4 rule del sport ' + sh.quote(listen_port) + ' table ' + sh.quote(tbl) + ' priority ' + sh.quote(prio) + ' 2>/dev/null');
 						sh.ip('-4', 'rule', 'add', 'sport', listen_port, 'table', tbl, 'priority', prio);
 						if (cfg.ipv6_enabled) {
-							system(pkg.ip_full + ' -6 rule del sport ' + listen_port + ' table ' + tbl + ' priority ' + prio + ' 2>/dev/null');
+							system(pkg.ip_full + ' -6 rule del sport ' + sh.quote(listen_port) + ' table ' + sh.quote(tbl) + ' priority ' + sh.quote(prio) + ' 2>/dev/null');
 							sh.ip('-6', 'rule', 'add', 'sport', listen_port, 'table', tbl, 'priority', prio);
 						}
 						prio = '' + (+prio - 1);
@@ -1258,13 +1258,13 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 			iface_priority = prio;
 			return 0;
 		}
-		system(pkg.ip_full + ' -4 rule del priority ' + prio + ' 2>/dev/null');
-		system(pkg.ip_full + ' -4 rule del lookup main suppress_prefixlength ' + cfg.prefixlength + ' 2>/dev/null');
+		system(pkg.ip_full + ' -4 rule del priority ' + sh.quote(prio) + ' 2>/dev/null');
+		system(pkg.ip_full + ' -4 rule del lookup main suppress_prefixlength ' + sh.quote(cfg.prefixlength) + ' 2>/dev/null');
 		sh.try_cmd(state.errors, pkg.ip_full, '-4', 'rule', 'add', 'lookup', 'main', 'suppress_prefixlength',
 			'' + cfg.prefixlength, 'pref', prio);
 		if (cfg.ipv6_enabled) {
-			system(pkg.ip_full + ' -6 rule del priority ' + prio + ' 2>/dev/null');
-			system(pkg.ip_full + ' -6 rule del lookup main suppress_prefixlength ' + cfg.prefixlength + ' 2>/dev/null');
+			system(pkg.ip_full + ' -6 rule del priority ' + sh.quote(prio) + ' 2>/dev/null');
+			system(pkg.ip_full + ' -6 rule del lookup main suppress_prefixlength ' + sh.quote(cfg.prefixlength) + ' 2>/dev/null');
 			sh.try_cmd(state.errors, pkg.ip_full, '-6', 'rule', 'add', 'lookup', 'main', 'suppress_prefixlength',
 				'' + cfg.prefixlength, 'pref', prio);
 		}

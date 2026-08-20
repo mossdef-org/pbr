@@ -690,10 +690,10 @@ function create_nft(fs_mod, config, sh, output, pkg, platform, network, V, state
 							let tm = match(line, /lookup\s+(\S+)/);
 							if (tm && network.is_netifd_table(tm[1])) continue;
 						}
-						system(pkg.ip_full + ' -4 rule del priority ' + prio + ' 2>/dev/null');
+						system(pkg.ip_full + ' -4 rule del priority ' + sh.quote(prio) + ' 2>/dev/null');
 					}
 				}
-				system(pkg.ip_full + ' -4 rule del lookup main suppress_prefixlength ' + cfg.prefixlength + ' 2>/dev/null');
+				system(pkg.ip_full + ' -4 rule del lookup main suppress_prefixlength ' + sh.quote(cfg.prefixlength) + ' 2>/dev/null');
 
 				let rules6 = sh.exec(pkg.ip_full + ' -6 rule show 2>/dev/null');
 				if (rules6) {
@@ -707,10 +707,10 @@ function create_nft(fs_mod, config, sh, output, pkg, platform, network, V, state
 							let tm = match(line, /lookup\s+(\S+)/);
 							if (tm && network.is_netifd_table(tm[1])) continue;
 						}
-						system(pkg.ip_full + ' -6 rule del priority ' + prio + ' 2>/dev/null');
+						system(pkg.ip_full + ' -6 rule del priority ' + sh.quote(prio) + ' 2>/dev/null');
 					}
 				}
-				system(pkg.ip_full + ' -6 rule del lookup main suppress_prefixlength ' + cfg.prefixlength + ' 2>/dev/null');
+				system(pkg.ip_full + ' -6 rule del lookup main suppress_prefixlength ' + sh.quote(cfg.prefixlength) + ' 2>/dev/null');
 				break;
 			}
 			case 'main_chains': {

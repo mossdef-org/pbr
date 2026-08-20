@@ -169,6 +169,7 @@ let _captured = {};
    each and cannot leak into the next; clear_commands() is for asserting a single
    phase within one run, not for cleaning up after another test. */
 let _commands = [];
+let _argvs = [];
 
 /* Select recorded commands: everything when needle is null, those containing
    needle when it is a string, those matching it when it is a regexp. */
@@ -265,7 +266,14 @@ global.mocklib = {
 
 	/* Drop everything recorded so far, so a test can record one phase at a
 	   time (e.g. clear after start_service() to assert on stop_service()) */
-	clear_commands: () => { _commands = []; },
+	clear_commands: () => { _commands = []; _argvs = []; },
+
+	/* Read what system() was called with WITHOUT the join(' ') flattening that
+	   commands() applies -- an array call is returned as an array. Needed to
+	   assert that an argument containing a space is passed as ONE argv element
+	   rather than being re-split by a shell; commands() cannot see that
+	   difference, since ['a b','c'] and ['a','b','c'] join identically. */
+	argvs: () => [ ..._argvs ],
 };
 
 /* Override stdlib functions */
@@ -276,6 +284,7 @@ global.system = function(argv, timeout) {
 	   including the '[ -t 2 ]' tty probe below, so the list reflects the
 	   process exactly as it ran. */
 	push(_commands, type(argv) == "array" ? join(' ', argv) : '' + argv);
+	push(_argvs, type(argv) == "array" ? [ ...argv ] : '' + argv);
 
 	/* Return 1 for tty checks so output goes to logger, not stderr */
 	if (type(argv) == "string" && index(argv, "[ -t ") >= 0)

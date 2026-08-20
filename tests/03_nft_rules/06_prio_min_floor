@@ -75,19 +75,19 @@ let deletes = mocklib.commands(/rule del priority /);
 
 let checks = [
 	// the guard itself -- both families, both loops
-	['no_v4_priority_zero',   !mocklib.has_command('-4 rule del priority 0 ')],
-	['no_v6_priority_zero',   !mocklib.has_command('-6 rule del priority 0 ')],
-	['no_negative_priority',  !mocklib.has_command(/rule del priority -/)],
+	['no_v4_priority_zero',   !mocklib.has_command("-4 rule del priority '0'")],
+	['no_v6_priority_zero',   !mocklib.has_command("-6 rule del priority '0'")],
+	['no_negative_priority',  !mocklib.has_command(/rule del priority '?-/)],
 	// the window still does its job, or the checks above would pass vacuously
-	['v4_in_window_deleted',   mocklib.has_command('-4 rule del priority 99 ')],
-	['v6_in_window_deleted',   mocklib.has_command('-6 rule del priority 99 ')],
-	['v4_prio_max_deleted',    mocklib.has_command('-4 rule del priority 100 ')],
+	['v4_in_window_deleted',   mocklib.has_command("-4 rule del priority '99'")],
+	['v6_in_window_deleted',   mocklib.has_command("-6 rule del priority '99'")],
+	['v4_prio_max_deleted',    mocklib.has_command("-4 rule del priority '100'")],
 	// and stays inside its bounds at the top end
-	['above_window_kept',     !mocklib.has_command('rule del priority 32766')],
-	['default_rule_kept',     !mocklib.has_command('rule del priority 32767')],
+	['above_window_kept',     !mocklib.has_command("rule del priority '32766'")],
+	['default_rule_kept',     !mocklib.has_command("rule del priority '32767'")],
 	// the unconditional suppress_prefixlength deletes are unaffected
-	['v4_suppress_deleted',    mocklib.has_command('-4 rule del lookup main suppress_prefixlength 1')],
-	['v6_suppress_deleted',    mocklib.has_command('-6 rule del lookup main suppress_prefixlength 1')],
+	['v4_suppress_deleted',    mocklib.has_command("-4 rule del lookup main suppress_prefixlength '1'")],
+	['v6_suppress_deleted',    mocklib.has_command("-6 rule del lookup main suppress_prefixlength '1'")],
 	// the invariant behind all of the above, over every delete pbr issues --
 	// the cleanup window and the per-interface deletes alike
 	['all_priorities_positive',

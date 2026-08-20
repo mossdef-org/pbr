@@ -31,8 +31,15 @@ function create_output(sh, pkg_name, sym) {
 			let clean = replace(msg, /\x1b\[[0-9;]*m/g, '');
 			clean = replace(clean, /\\n/g, '\n');
 			clean = trim(clean);
+			// Argument ARRAY, not a shell string: the message reaches logger as
+			// one argv element, so arbitrary log text -- interface names, UCI
+			// values, nft error output -- can never be re-split on spaces or
+			// read as shell syntax. This is why sh.quote() is gone from here,
+			// and why `sh` is now unused by create_output(). system() has taken
+			// arrays since well before the oldest ucode pbr supports; see
+			// create_sys().ip() in sys.uc for the full rationale.
 			if (clean != '')
-				system('/usr/bin/logger -t ' + sh.quote(script_name) + ' ' + sh.quote(clean));
+				system(['/usr/bin/logger', '-t', script_name, clean]);
 		} else {
 			output_queue += msg;
 		}
@@ -40,7 +47,7 @@ function create_output(sh, pkg_name, sym) {
 
 	function logger_debug(debug_performance, msg) {
 		if (debug_performance)
-			system('/usr/bin/logger -t ' + sh.quote(script_name) + ' ' + sh.quote(msg));
+			system(['/usr/bin/logger', '-t', script_name, msg]);
 	}
 
 	let out = {

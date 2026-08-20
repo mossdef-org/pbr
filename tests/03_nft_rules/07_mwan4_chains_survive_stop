@@ -84,12 +84,12 @@ let checks = [
 	['fw4_reloaded',        mocklib.has_command('fw4 -q reload')],
 	['route_cache_flushed', mocklib.has_command('route flush cache')],
 	['rt_tables_synced',    mocklib.has_command('sync')],
-	['pbr_rules_removed',   mocklib.has_command('-4 rule del priority 29999')],
+	['pbr_rules_removed',   mocklib.has_command("-4 rule del priority '29999'")],
 	// the promise: nothing pbr does on stop goes near mwan4 -- not its chains,
 	// and not the ip rules it parks well below pbr's cleanup window either
 	['mwan4_untouched',     !mocklib.has_command('mwan4')],
-	['mwan4_ip_rule_kept',  !mocklib.has_command('rule del priority 2001')],
-	['kernel_local_kept',   !mocklib.has_command('rule del priority 0 ')],
+	['mwan4_ip_rule_kept',  !mocklib.has_command("rule del priority '2001'")],
+	['kernel_local_kept',   !mocklib.has_command("rule del priority '0'")],
 	['no_foreign_chain_op', length(foreign_chain_ops) == 0],
 	// fw4's own chains are not pbr's to tear down either
 	['fw4_base_chains_kept',

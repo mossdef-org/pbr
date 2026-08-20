@@ -64,7 +64,7 @@ push(checks,
 	// and the absence of one -- nothing is torn down live before that swap
 	['no_chain_flush',       length(flushes) == 0],
 	// the ip rule deletes go to system() directly
-	['rule_delete_recorded', mocklib.has_command('rule del priority 30000')],
+	['rule_delete_recorded', mocklib.has_command("rule del priority '30000'")],
 	['no_priority_zero_del', !mocklib.has_command(/rule del priority 0 /)]);
 
 let pass = 0, fail = 0;

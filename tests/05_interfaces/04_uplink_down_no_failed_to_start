@@ -46,11 +46,14 @@ let pbr = create_pbr();
 
 // Capture every system() call so we can scan for the FAILED-TO-START
 // logger invocation. mocklib already stubs system to return 0; we wrap
-// it to also record the command string.
+// it to also record the command. system() takes either a string or an
+// argument array -- output.uc passes the logger call as an array so no
+// shell sees the message -- so flatten to a string the way mocklib's
+// own commands() recorder does, and scan that.
 let system_calls = [];
 let _prev_system = global.system;
 global.system = function(argv, timeout) {
-	push(system_calls, argv);
+	push(system_calls, type(argv) == 'array' ? join(' ', argv) : '' + argv);
 	return _prev_system(argv, timeout);
 };
 
@@ -63,11 +66,11 @@ let pbr2 = create_pbr();
 pbr2.service_started('on_start', result?.deferredToBoot ? '1' : '');
 
 let failed_to_start = filter(system_calls,
-	c => type(c) == 'string' && index(c, 'FAILED TO START') >= 0);
+	c => index(c, 'FAILED TO START') >= 0);
 let check_output = filter(system_calls,
-	c => type(c) == 'string' && index(c, 'Check the output of nft -c -f') >= 0);
+	c => index(c, 'Check the output of nft -c -f') >= 0);
 let uplink_warn = filter(system_calls,
-	c => type(c) == 'string' && index(c, 'Uplink/WAN interface is still down') >= 0);
+	c => index(c, 'Uplink/WAN interface is still down') >= 0);
 
 let checks = [
 	['start_service_returns_partial', type(result) == 'object'],
