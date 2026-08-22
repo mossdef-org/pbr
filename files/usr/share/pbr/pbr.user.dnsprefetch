@@ -6,6 +6,25 @@
 # on the shell implementation (1.2.2 and earlier), which ships its own copy of
 # this file -- use that one there.
 #
+# WHEN IT RUNS: once per full pbr run -- start, restart and reload. Not on the
+# on_boot pass, not on a start deferred because the uplink is down, and not on
+# stop. Overlapping runs are harmless: each detached copy makes its own
+# $$-suffixed fifo.
+#
+# An interface event (a wan flap) does NOT run it. That path reloads the
+# interfaces and returns; user files, the ruleset rewrite and the resolver step
+# all sit in the branch it skips. It only prefetches when pbr promotes the event
+# to a full start, which it does when its ruleset is not installed, when procd
+# reports no gateways, or when the last run recorded errors. So the sets are
+# refilled after the reload that follows a flap, not by the flap itself.
+#
+# There is no timer. Nothing re-resolves a name once its TTL expires and
+# dnsmasq drops it from the cache, so a set keeps the addresses it got until
+# the next pbr run. That is inherent to a prefetch rather than a refresher; a
+# domain that rotates addresses faster than pbr reloads needs a cron job
+# reloading pbr, which reprocesses everything and is worth it only if stale
+# routing actually shows up.
+#
 # pbr sources this file from a bare shell that exports none of the service's
 # internal variables, so everything needed is defined below. In particular do
 # not reintroduce $packageName, $packageDnsmasqFile or $resolverSetSupported:
