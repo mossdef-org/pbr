@@ -44,8 +44,16 @@
 _dnsprefetch_self='/usr/share/pbr/pbr.user.dnsprefetch'
 
 if [ -z "$PBR_DNSPREFETCH_CHILD" ]; then
-	[ -f "$_dnsprefetch_self" ] &&
+	if [ -f "$_dnsprefetch_self" ]; then
 		PBR_DNSPREFETCH_CHILD=1 setsid /bin/sh "$_dnsprefetch_self" </dev/null >/dev/null 2>&1 &
+	else
+		# The only failure this script cannot report from the detached copy,
+		# since there is nothing to detach. pbr logs that it ran the file but
+		# never what the file did, so without this line a prefetch that was
+		# installed somewhere else is skipped in silence -- which is exactly
+		# how this script used to fail.
+		logger -t "pbr [$$]" "WARNING: $_dnsprefetch_self not found, domain names in policies not resolved [✗]"
+	fi
 else
 	packageName='pbr'
 	packageDnsmasqFile="/var/run/${packageName}.dnsmasq"
