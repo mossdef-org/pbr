@@ -69,6 +69,7 @@ readonly nftNetifdFile="/usr/share/nftables.d/ruleset-post/20-${packageName}-net
 readonly nftPrefix="$packageName"
 readonly nftTable='fw4'
 readonly chainsList='forward output prerouting'
+readonly symmetricChainsList='symmetric_prerouting symmetric_output'
 readonly ssConfigFile='/etc/shadowsocks'
 readonly torConfigFile='/etc/tor/torrc'
 readonly xrayIfacePrefix='xray_'
@@ -147,6 +148,8 @@ resolver_set=
 resolver_instance=
 strict_enforcement=
 supported_interface=
+symmetric_return=
+symmetric_return_interface=
 verbosity=
 uplink_ip_rules_priority=
 uplink_mark=
@@ -198,6 +201,7 @@ nft_fw4_dump=
 loadEnvironmentFlag=
 loadPackageConfigFlag=
 resolverWorkingFlag=
+symmetricReturnDevices=
 resolverStoredHash=
 
 # shellcheck disable=SC1091
@@ -776,6 +780,8 @@ load_package_config() {
 	config_get      resolver_set              'config' 'resolver_set'
 	config_get_bool strict_enforcement        'config' 'strict_enforcement'       '1'
 	config_get_list supported_interface       'config' 'supported_interface'
+	config_get_bool symmetric_return           'config' 'symmetric_return'          '0'
+	config_get_list symmetric_return_interface 'config' 'symmetric_return_interface'
 	config_get      uplink_interface          'config' 'uplink_interface'         'wan'
 	config_get      uplink_interface6         'config' 'uplink_interface6'        'wan6'
 	config_get      uplink_ip_rules_priority  'config' 'uplink_ip_rules_priority' '30000'
@@ -797,6 +803,7 @@ load_package_config() {
 	[ "$ipv6_enabled" = '1' ]         || unset uplink_interface6
 	[ "$ipv6_enabled" = '1' ]         || unset ipv6_enabled
 	[ "$strict_enforcement" = '1' ]   || unset strict_enforcement
+	[ "$symmetric_return" = '1' ]     || unset symmetric_return
 
 	fw_maskXor="$(printf '%#x' "$((fw_mask ^ 0xffffffff))")"
 	fw_maskXor="${fw_maskXor:-0xff00ffff}"
@@ -1012,6 +1019,7 @@ nft_file() {
 		;;
 		create:main)
 			rm -f "$nftTempFile" "$nftMainFile"
+			unset symmetricReturnDevices
 			for i in "$nftTempFile" "$nftMainFile"; do
 				mkdir -p "${i%/*}"
 			done
@@ -1020,9 +1028,17 @@ nft_file() {
 			for chain in dstnat $chainsList; do
 				echo "add chain inet $nftTable ${nftPrefix}_${chain} {}" >> "$nftTempFile"
 			done
+			if [ -n "$symmetric_return" ]; then
+				echo "add chain inet $nftTable ${nftPrefix}_symmetric_prerouting {}" >> "$nftTempFile"
+				echo "add chain inet $nftTable ${nftPrefix}_symmetric_output {}" >> "$nftTempFile"
+			fi
 			echo "" >> "$nftTempFile"
 			# Add jump rules from fw4 chains to pbr chains
 			echo "insert rule inet $nftTable dstnat jump ${nftPrefix}_dstnat" >> "$nftTempFile"
+			if [ -n "$symmetric_return" ]; then
+				echo "insert rule inet $nftTable mangle_prerouting jump ${nftPrefix}_symmetric_prerouting" >> "$nftTempFile"
+				echo "insert rule inet $nftTable mangle_output jump ${nftPrefix}_symmetric_output" >> "$nftTempFile"
+			fi
 			echo "add rule inet $nftTable mangle_prerouting jump ${nftPrefix}_prerouting" >> "$nftTempFile"
 			echo "add rule inet $nftTable mangle_output jump ${nftPrefix}_output" >> "$nftTempFile"
 			echo "add rule inet $nftTable mangle_forward jump ${nftPrefix}_forward" >> "$nftTempFile"
@@ -1298,7 +1314,7 @@ cleanup() {
 				ip -6 rule del lookup 'main' suppress_prefixlength "$prefixlength" 2>/dev/null
 			;;
 			main_chains)
-				for i in $chainsList dstnat; do
+				for i in $chainsList dstnat $symmetricChainsList; do
 					i="$(str_to_lower "$i")"
 					nft_call flush chain inet "$nftTable" "${nftPrefix}_${i}"
 				done
@@ -2491,6 +2507,24 @@ interface_routing() {
 	esac
 }
 
+add_symmetric_return_interface() {
+	local iface="$1" dev="$2" mark="$3"
+	[ -n "$symmetric_return" ] || return 0
+	str_contains_word "$symmetric_return_interface" "$iface" || return 0
+	[ -n "$dev" ] || return 0
+	str_contains_word "$symmetricReturnDevices" "$dev" && return 0
+
+	nft "add rule inet $nftTable ${nftPrefix}_symmetric_prerouting ct state new iifname \"${dev}\" ${nftRuleParams:+${nftRuleParams} }ct mark set (ct mark & ${fw_maskXor}) | ${mark} comment \"Preserve ingress route for ${iface}\""
+	symmetricReturnDevices="${symmetricReturnDevices:+${symmetricReturnDevices} }${dev}"
+}
+
+finish_symmetric_return_rules() {
+	[ -n "$symmetric_return" ] || return 0
+	[ -n "$symmetricReturnDevices" ] || return 0
+	nft "add rule inet $nftTable ${nftPrefix}_symmetric_prerouting ct direction reply ct mark & ${fw_mask} != 0 ${nftRuleParams:+${nftRuleParams} }meta mark set (meta mark & ${fw_maskXor}) | (ct mark & ${fw_mask}) comment \"Restore ingress route for forwarded replies\""
+	nft "add rule inet $nftTable ${nftPrefix}_symmetric_output ct direction reply ct mark & ${fw_mask} != 0 ${nftRuleParams:+${nftRuleParams} }meta mark set (meta mark & ${fw_maskXor}) | (ct mark & ${fw_mask}) comment \"Restore ingress route for local replies\""
+}
+
 json_add_gateway() {
 	local action="$1" tid="$2" mark="$3" iface="$4" gw4="$5" dev4="$6" gw6="$7" dev6="$8" priority="$9" default="${10}"
 	json_add_object 'gateways'
@@ -2640,6 +2674,7 @@ process_interface() {
 			ifacesTriggers="${ifacesTriggers:+${ifacesTriggers} }$iface"
 		;;
 		create)
+			add_symmetric_return_interface "$iface" "$dev4" "$_mark"
 			if [ -z "$splitUplinkSecondIface" ]; then
 				_tid="$(get_rt_tables_id "$iface")"
 				[ -z "$_tid" ] && _tid="$(get_rt_tables_next_id)"
@@ -3000,6 +3035,7 @@ start_service() {
 			process_interface 'tor' 'destroy'
 			is_tor_running && process_interface 'tor' 'create'
 			process_interface 'all' 'create_global_rules'
+			finish_symmetric_return_rules
 			json_close_array
 			ip route flush cache
 			output_1_newline
@@ -3229,6 +3265,9 @@ status_service() {
 		[ -z "$dev6" ] && dev6="$dev4"
 		status="${status}Uplink (IPv6): ${uplink_interface6}${dev6:+/${dev6}}/${uplinkGW6:-::/0}.\n"
 	fi
+	if [ -n "$symmetric_return" ]; then
+		status="${status}Symmetric return: ${symmetric_return_interface:-<no interfaces selected>}.\n"
+	fi
 
 	echo "$_SEPARATOR_"
 	echo "$packageName - environment"
@@ -3259,6 +3298,13 @@ status_service() {
 	for i in $(get_nft_sets); do
 		"$nft" -a list table inet "$nftTable" | sed -n "/set ${i} {/,/\t}/p"
 	done
+	if [ -n "$symmetric_return" ]; then
+		echo "$_SEPARATOR_"
+		echo "$packageName chains - symmetric return"
+		for i in $symmetricChainsList; do
+			"$nft" -a list table inet "$nftTable" | sed -n "/chain ${nftPrefix}_${i} {/,/\t}/p"
+		done
+	fi
 	if [ -s "$packageDnsmasqFile" ]; then
 		echo "$_SEPARATOR_"
 		echo "dnsmasq nft sets in $packageDnsmasqFile"
@@ -3406,6 +3452,8 @@ load_validate_config() {
 	uci_load_validate "$packageName" "$packageName" "$1" "${2}${3:+ ${3}}" \
 		'enabled:bool:0' \
 		'strict_enforcement:bool:1' \
+		'symmetric_return:bool:0' \
+		'symmetric_return_interface:list(uci("network", "@interface"))' \
 		'ipv6_enabled:bool:0' \
 		'resolver_set:or("", "none", "dnsmasq.nftset")' \
 		'resolver_instance:list(or(integer, string)):*' \
