@@ -50,6 +50,7 @@ function create_config(uci_mod, ubus_mod, pkg) {
 		nft_set_auto_merge:       ['bool', true],
 		nft_set_flags_interval:   ['bool', true],
 		strict_enforcement:       ['bool', true],
+		symmetric_return:         ['bool', false],
 		config_compat:            ['string'],
 		config_version:           ['string'],
 		fw_mask:                  ['string', '00ff0000'],
@@ -74,6 +75,7 @@ function create_config(uci_mod, ubus_mod, pkg) {
 		lan_device:               ['list', 'br-lan'],
 		resolver_instance:        ['list', '*'],
 		supported_interface:      ['list', ''],
+		symmetric_return_interface:['list', ''],
 	};
 
 	const policy_schema = {

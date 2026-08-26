@@ -23,6 +23,7 @@ const pkg = {
 	nft_ipv4_flag: 'ip',
 	nft_ipv6_flag: 'ip6',
 	chains_list: 'forward output prerouting',
+	symmetric_chains_list: 'symmetric_prerouting symmetric_output',
 	ip_full: '/usr/libexec/ip-full',
 	ip_table_prefix: 'pbr',
 	rt_tables_file: '/etc/iproute2/rt_tables',

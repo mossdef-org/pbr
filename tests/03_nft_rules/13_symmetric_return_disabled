@@ -1,0 +1,87 @@
+Testing that the symmetric return feature is inert unless it is switched on.
+
+The option ships as '0', so the overwhelming majority of installs must generate
+a ruleset that is byte for byte what they got before the feature existed: no
+chains, no jumps into fw4's mangle chains, and no rules. A stray 'insert rule'
+into mangle_prerouting would reorder every packet's path through fw4 for users
+who never asked for any of this.
+
+symmetric_return_interface is deliberately populated here: selecting interfaces
+without enabling the feature must still produce nothing.
+
+-- Testcase --
+import create_pbr from 'pbr';
+let pbr = create_pbr();
+
+pbr.start_service(['on_start']);
+
+let nft_content = global.mocklib.read_captured('/var/run/pbr.nft');
+let checks = [];
+
+if (nft_content) {
+	let lines = split(nft_content, '\n');
+	push(checks, ['no_symmetric_chains_or_rules',
+		length(filter(lines, l => index(l, 'pbr_symmetric') >= 0)) == 0]);
+	push(checks, ['no_symmetric_text_anywhere',
+		index(nft_content, 'symmetric') < 0]);
+	push(checks, ['no_ct_mark_rules',
+		length(filter(lines, l => index(l, 'ct mark set') >= 0)) == 0]);
+	push(checks, ['no_ct_direction_rules',
+		length(filter(lines, l => index(l, 'ct direction') >= 0)) == 0]);
+
+	// The only rules inserted into fw4's own chains remain the pre-existing
+	// dstnat jump; mangle_prerouting and mangle_output keep append semantics.
+	let inserts = filter(lines, l => index(l, 'insert rule inet fw4') >= 0);
+	push(checks, ['only_the_dstnat_jump_is_inserted',
+		length(inserts) == 1 && index(inserts[0], 'dstnat jump pbr_dstnat') >= 0]);
+
+	// pbr's normal chains are still built, so this is a working ruleset and
+	// not an empty file that would pass the checks above vacuously.
+	push(checks, ['normal_chains_still_present',
+		index(nft_content, 'add chain inet fw4 pbr_prerouting {}') >= 0 &&
+		index(nft_content, 'add rule inet fw4 mangle_prerouting jump pbr_prerouting') >= 0]);
+} else {
+	push(checks, ['nft_file_written', false]);
+}
+
+let pass = 0, fail = 0;
+for (let c in checks) {
+	if (c[1]) {
+		pass++;
+	} else {
+		fail++;
+		printf("FAIL: %s\n", c[0]);
+	}
+}
+printf("symmetric_return_disabled: %d/%d passed\n", pass, pass + fail);
+-- End --
+
+-- File uci/pbr.json --
+{
+	"pbr": [
+		{
+			".name": "config",
+			"enabled": "1",
+			"fw_mask": "00ff0000",
+			"ipv6_enabled": "0",
+			"resolver_set": "",
+			"strict_enforcement": "1",
+			"symmetric_return": "0",
+			"symmetric_return_interface": ["wan", "vpn"],
+			"uplink_interface": "wan",
+			"uplink_interface6": "wan6",
+			"uplink_ip_rules_priority": "30000",
+			"uplink_mark": "00010000",
+			"verbosity": "2",
+			"lan_device": ["br-lan"],
+			"resolver_instance": ["*"],
+			"ignored_interface": ["vpnserver"]
+		}
+	],
+	"policy": []
+}
+-- End --
+
+-- Expect stdout --
+symmetric_return_disabled: 6/6 passed
+-- End --

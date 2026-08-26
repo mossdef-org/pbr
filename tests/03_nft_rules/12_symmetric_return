@@ -1,0 +1,125 @@
+Testing the symmetric return ruleset: chains, jump wiring, and the per-interface
+ingress rules that make replies leave by the interface they arrived on.
+
+Replies normally follow the main routing table, so a connection arriving on a
+non-default uplink is answered out of whichever interface owns the default
+route. The feature saves the ingress interface's mark into ct mark on the first
+packet and restores it into meta mark on replies, which selects that interface's
+ip rule and routing table.
+
+Two properties matter beyond "the rules exist". The jumps into fw4's mangle
+chains have to be inserted rather than appended, so the mark is restored before
+the regular pbr chains run and their 'meta mark & fw_mask != 0 return' guard
+then leaves it alone. And the ingress rules are keyed by device, not by
+interface: wan and wan6 share eth1 here, so the pair must not produce two rules
+that would have the second mark overwrite the first.
+
+-- Testcase --
+import create_pbr from 'pbr';
+let pbr = create_pbr();
+
+pbr.start_service(['on_start']);
+
+let nft_content = global.mocklib.read_captured('/var/run/pbr.nft');
+let checks = [];
+
+if (nft_content) {
+	let lines = split(nft_content, '\n');
+	let has = (needle) => length(filter(lines, l => index(l, needle) >= 0));
+	let sym = filter(lines, l => index(l, 'pbr_symmetric') >= 0);
+
+	// Both chains are created when the feature is on.
+	push(checks, ['prerouting_chain_created',
+		has('add chain inet fw4 pbr_symmetric_prerouting {}') == 1]);
+	push(checks, ['output_chain_created',
+		has('add chain inet fw4 pbr_symmetric_output {}') == 1]);
+
+	// The jumps must be inserted at the head of the fw4 chains, not appended.
+	push(checks, ['prerouting_jump_inserted',
+		has('insert rule inet fw4 mangle_prerouting jump pbr_symmetric_prerouting') == 1]);
+	push(checks, ['output_jump_inserted',
+		has('insert rule inet fw4 mangle_output jump pbr_symmetric_output') == 1]);
+	push(checks, ['jumps_never_appended',
+		has('add rule inet fw4 mangle_prerouting jump pbr_symmetric_prerouting') == 0 &&
+		has('add rule inet fw4 mangle_output jump pbr_symmetric_output') == 0]);
+
+	// pbr's own jumps stay appended, so the symmetric chain runs first.
+	push(checks, ['pbr_prerouting_jump_still_appended',
+		has('add rule inet fw4 mangle_prerouting jump pbr_prerouting') == 1]);
+
+	// One ingress rule per selected interface, carrying that interface's mark.
+	push(checks, ['wan_ingress_rule',
+		has('pbr_symmetric_prerouting ct state new iifname "eth1" ct mark set (ct mark & 0xff00ffff) | 0x010000') == 1]);
+	push(checks, ['vpn_ingress_rule',
+		has('pbr_symmetric_prerouting ct state new iifname "tun0" ct mark set (ct mark & 0xff00ffff) | 0x020000') == 1]);
+
+	// wan and wan6 both resolve to eth1, so the selection yields one rule per
+	// device rather than one per interface name.
+	let ingress = filter(sym, l => index(l, 'ct state new') >= 0);
+	push(checks, ['one_ingress_rule_per_device', length(ingress) == 2]);
+
+	// Interfaces that were not selected get nothing.
+	push(checks, ['unselected_interfaces_skipped',
+		has('pbr_symmetric_prerouting ct state new iifname "br-lan"') == 0 &&
+		has('pbr_symmetric_prerouting ct state new iifname "wg1"') == 0]);
+
+	// Replies are restored on both the forwarded and the locally generated path.
+	push(checks, ['forwarded_restore_rule',
+		has('pbr_symmetric_prerouting ct direction reply ct mark & 0x00ff0000 != 0 meta mark set (meta mark & 0xff00ffff) | (ct mark & 0x00ff0000)') == 1]);
+	push(checks, ['local_restore_rule',
+		has('pbr_symmetric_output ct direction reply ct mark & 0x00ff0000 != 0 meta mark set (meta mark & 0xff00ffff) | (ct mark & 0x00ff0000)') == 1]);
+
+	// The ingress rules are emitted before the restore rules, so a new packet
+	// is tagged by the interface rule and never falls through to a reply rule.
+	let first_restore = -1, last_ingress = -1;
+	for (let i = 0; i < length(sym); i++) {
+		if (index(sym[i], 'ct state new') >= 0) last_ingress = i;
+		if (index(sym[i], 'ct direction reply') >= 0 && first_restore < 0) first_restore = i;
+	}
+	push(checks, ['ingress_rules_precede_restore_rules',
+		last_ingress >= 0 && first_restore > last_ingress]);
+} else {
+	push(checks, ['nft_file_written', false]);
+}
+
+let pass = 0, fail = 0;
+for (let c in checks) {
+	if (c[1]) {
+		pass++;
+	} else {
+		fail++;
+		printf("FAIL: %s\n", c[0]);
+	}
+}
+printf("symmetric_return: %d/%d passed\n", pass, pass + fail);
+-- End --
+
+-- File uci/pbr.json --
+{
+	"pbr": [
+		{
+			".name": "config",
+			"enabled": "1",
+			"fw_mask": "00ff0000",
+			"ipv6_enabled": "1",
+			"resolver_set": "",
+			"strict_enforcement": "1",
+			"symmetric_return": "1",
+			"symmetric_return_interface": ["wan", "wan6", "vpn"],
+			"uplink_interface": "wan",
+			"uplink_interface6": "wan6",
+			"uplink_ip_rules_priority": "30000",
+			"uplink_mark": "00010000",
+			"verbosity": "2",
+			"lan_device": ["br-lan"],
+			"resolver_instance": ["*"],
+			"ignored_interface": ["vpnserver"]
+		}
+	],
+	"policy": []
+}
+-- End --
+
+-- Expect stdout --
+symmetric_return: 13/13 passed
+-- End --
