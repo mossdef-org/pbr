@@ -208,6 +208,32 @@ return {
 			push(this._changes[config], { op: 'list_append', section, option, value });
 		},
 
+		/* Remove a single value from a list option, leaving the rest of the
+		   list intact -- the counterpart of list_append(), and what real uci
+		   does for `del_list`.
+
+		   Two fidelity details, both measured against ucode 85922056 rather
+		   than assumed: delete() above deliberately ignores a fourth
+		   argument, exactly as the C implementation does, so a test that
+		   passes one still sees the whole option disappear; and list_remove()
+		   does nothing at all to an option holding a plain string rather than
+		   a list, returning true and leaving the value in place. */
+		list_remove: function(config, section, option, value) {
+			if (!exists(this._configs, config))
+				this.load(config);
+
+			let sobj = this._get_section(config, section);
+			if (!sobj) return;
+
+			let current = sobj[option];
+			if (type(current) == 'array')
+				sobj[option] = filter(current, v => v != value);
+
+			if (!this._changes[config])
+				this._changes[config] = [];
+			push(this._changes[config], { op: 'list_remove', section, option, value });
+		},
+
 		save: function(config) {
 			/* No-op in mock: changes are already in memory */
 		},

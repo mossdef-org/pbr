@@ -848,12 +848,16 @@ function create_nft(fs_mod, config, sh, output, pkg, platform, network, V, state
 		if (!ctx.get('dhcp', instance)) return false;
 		let confdir = resolver._dnsmasq_get_confdir(instance);
 		if (confdir) unlink(confdir + '/' + pkg.name);
+		// Drop ONLY our own entry. uci.delete() takes three arguments
+		// (config, section, option) -- a fourth is silently ignored, so
+		// delete(..., 'addnmount', file) wipes the whole list, taking every
+		// other package's mount (adblock's, most visibly) with it, and their
+		// directories stop being mounted into dnsmasq's jail on its next
+		// start. list_remove() is the call that removes a single value.
 		let current = ctx.get('dhcp', instance, 'addnmount');
 		if (type(current) == 'array') {
-			let idx = index(current, pkg.dnsmasq_file);
-			if (idx >= 0) {
-				ctx.reorder('dhcp', instance, idx);
-				ctx.delete('dhcp', instance, 'addnmount', pkg.dnsmasq_file);
+			if (index(current, pkg.dnsmasq_file) >= 0) {
+				ctx.list_remove('dhcp', instance, 'addnmount', pkg.dnsmasq_file);
 				ctx.save('dhcp');
 			}
 		}
