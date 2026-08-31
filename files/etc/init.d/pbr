@@ -202,6 +202,8 @@ load_validate_config() {
 	uci_load_validate "$packageName" "$packageName" "$1" "${2}${3:+ ${3}}" \
 		'enabled:bool:0' \
 		'strict_enforcement:bool:1' \
+		'symmetric_return:bool:0' \
+		'symmetric_return_interface:list(uci("network", "@interface"))' \
 		'ipv6_enabled:bool:0' \
 		'resolver_set:or("", "none", "dnsmasq.nftset")' \
 		'resolver_instance:list(or(integer, string)):*' \

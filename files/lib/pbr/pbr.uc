@@ -2416,6 +2416,11 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 				(dev6 ? '/' + dev6 : '') + '/' + (env.uplink_gw6 || '::/0') + '.\\n';
 		}
 
+		if (cfg.symmetric_return) {
+			status_text += 'Symmetric return: ' +
+				(cfg.symmetric_return_interface || '<no interfaces selected>') + '.\\n';
+		}
+
 		printf('===== %s - environment =====\n', pkg.name);
 		printf('%s', replace(status_text, /\\n/g, '\n'));
 		printf('===== dnsmasq version =====\n');
@@ -2452,6 +2457,14 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 			if (!ns) continue;
 			_exec_print('nft -a list table inet ' + pkg.nft_table +
 				" | sed -n '/set " + ns + " {/,/\\t}/p'");
+		}
+
+		if (cfg.symmetric_return) {
+			printf('===== %s chains - symmetric return =====\n', pkg.name);
+			for (let ch in split(pkg.symmetric_chains_list, /\s+/)) {
+				_exec_print('nft -a list table inet ' + pkg.nft_table +
+					" | sed -n '/chain " + pkg.nft_prefix + '_' + ch + " {/,/\\t}/p'");
+			}
 		}
 
 		if (stat(pkg.dnsmasq_file)?.size > 0) {

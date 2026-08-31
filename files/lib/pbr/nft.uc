@@ -180,6 +180,41 @@ function create_nft(fs_mod, config, sh, output, pkg, platform, network, V, state
 		nft_add('add rule inet ' + pkg.nft_table + ' ' + chain_name + ' return');
 	}
 
+	function symmetric_return_rules(iface_registry) {
+		if (!cfg.symmetric_return || !iface_registry) return false;
+		let nft_prefix = pkg.nft_prefix;
+		let nft_table = pkg.nft_table;
+		let rule_params = cfg._nft_rule_params ? ' ' + cfg._nft_rule_params : '';
+		let seen_devices = {};
+		let emitted = false;
+
+		for (let iname in keys(iface_registry)) {
+			let idata = iface_registry[iname];
+			if (type(idata) == 'function') continue;
+			if (idata?.action) continue;
+			if (!V.str_contains_word(cfg.symmetric_return_interface, iname)) continue;
+			let dev = idata?.device_ipv4;
+			if (!dev || seen_devices[dev]) continue;
+			seen_devices[dev] = true;
+			push(nft_lines, 'add rule inet ' + nft_table + ' ' + nft_prefix +
+				'_symmetric_prerouting ct state new iifname "' + dev + '"' + rule_params +
+				' ct mark set (ct mark & ' + cfg.fw_maskXor + ') | ' + idata.mark +
+				' comment "Preserve ingress route for ' + iname + '"');
+			emitted = true;
+		}
+		if (!emitted) return false;
+
+		push(nft_lines, 'add rule inet ' + nft_table + ' ' + nft_prefix +
+			'_symmetric_prerouting ct direction reply ct mark & ' + cfg.fw_mask + ' != 0' + rule_params +
+			' meta mark set (meta mark & ' + cfg.fw_maskXor + ') | (ct mark & ' + cfg.fw_mask + ')' +
+			' comment "Restore ingress route for forwarded replies"');
+		push(nft_lines, 'add rule inet ' + nft_table + ' ' + nft_prefix +
+			'_symmetric_output ct direction reply ct mark & ' + cfg.fw_mask + ' != 0' + rule_params +
+			' meta mark set (meta mark & ' + cfg.fw_maskXor + ') | (ct mark & ' + cfg.fw_mask + ')' +
+			' comment "Restore ingress route for local replies"');
+		return true;
+	}
+
 	// ── NFT File Operations ───────────────────────────────────────────
 
 	let nft_file = {};
@@ -218,8 +253,18 @@ function create_nft(fs_mod, config, sh, output, pkg, platform, network, V, state
 			let chains = split(chains_list, ' ');
 			for (let ch in ['dstnat', ...chains])
 				push(nft_lines, 'add chain inet ' + nft_table + ' ' + nft_prefix + '_' + ch + ' {}');
+			if (cfg.symmetric_return)
+				for (let ch in split(pkg.symmetric_chains_list, ' '))
+					push(nft_lines, 'add chain inet ' + nft_table + ' ' + nft_prefix + '_' + ch + ' {}');
 			push(nft_lines, '');
 			push(nft_lines, 'insert rule inet ' + nft_table + ' dstnat jump ' + nft_prefix + '_dstnat');
+			// Inserted at the head of the fw4 chains so the ingress mark is
+			// restored before the regular pbr chains run; their existing
+			// 'meta mark & fw_mask != 0 return' guard then preserves it.
+			if (cfg.symmetric_return) {
+				push(nft_lines, 'insert rule inet ' + nft_table + ' mangle_prerouting jump ' + nft_prefix + '_symmetric_prerouting');
+				push(nft_lines, 'insert rule inet ' + nft_table + ' mangle_output jump ' + nft_prefix + '_symmetric_output');
+			}
 			push(nft_lines, 'add rule inet ' + nft_table + ' mangle_prerouting jump ' + nft_prefix + '_prerouting');
 			push(nft_lines, 'add rule inet ' + nft_table + ' mangle_output jump ' + nft_prefix + '_output');
 			push(nft_lines, 'add rule inet ' + nft_table + ' mangle_forward jump ' + nft_prefix + '_forward');
@@ -228,6 +273,7 @@ function create_nft(fs_mod, config, sh, output, pkg, platform, network, V, state
 			for (let ch in chains)
 				push(nft_lines, 'add rule inet ' + nft_table + ' ' + nft_prefix + '_' + ch +
 					rule_params + ' meta mark & ' + cfg.fw_mask + ' != 0 return');
+			symmetric_return_rules(iface_registry);
 			break;
 		}
 		case 'netifd':
@@ -715,7 +761,8 @@ function create_nft(fs_mod, config, sh, output, pkg, platform, network, V, state
 			}
 			case 'main_chains': {
 				let chains = split(pkg.chains_list, ' ');
-				for (let c in [...chains, 'dstnat']) {
+				let sym = split(pkg.symmetric_chains_list, ' ');
+				for (let c in [...chains, 'dstnat', ...sym]) {
 					c = lc(c);
 					nft_call('flush', 'chain', 'inet', pkg.nft_table, pkg.nft_prefix + '_' + c);
 				}
