@@ -636,6 +636,12 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 	
 	function dns_policy_process(uid, enabled, name, src_addr, dest_dns, dest_dns_port) {
 		if (enabled != '1') return 0;
+		// The name reaches nft raw -- as the comment on every rule the policy
+		// emits, on the sets it creates, and as the trailing comment on
+		// dnsmasq's nftset lines. Sanitise it here, where it enters, rather
+		// than at each of the dozen interpolations downstream; the errors and
+		// log lines below then quote exactly what ends up in the ruleset.
+		name = V.nft_comment(name);
 	
 		src_addr = replace(src_addr, /[,;{};]/g, ' ');
 		dest_dns = replace(dest_dns, /[,;{}]/g, ' ');
@@ -706,6 +712,12 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 	
 	function policy_process(uid, enabled, name, interface_name, src_addr, src_port, dest_addr, dest_port, proto, chain) {
 		if (enabled != '1') return 0;
+		// The name reaches nft raw -- as the comment on every rule the policy
+		// emits, on the sets it creates, and as the trailing comment on
+		// dnsmasq's nftset lines. Sanitise it here, where it enters, rather
+		// than at each of the dozen interpolations downstream; the errors and
+		// log lines below then quote exactly what ends up in the ruleset.
+		name = V.nft_comment(name);
 	
 		src_addr = replace(src_addr, /[,;{};]/g, ' ');
 		src_port = replace(src_port, /[,;{}]/g, ' ');

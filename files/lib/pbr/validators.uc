@@ -79,6 +79,35 @@ function filter_options(opt, values) {
 	return join(' ', ret);
 }
 
+// An nft comment is a double-quoted string with a hard 128-BYTE limit, and the
+// quote has no escape inside it: the first `"` ends the string and whatever
+// follows becomes syntax nft cannot parse. Both failures are caught by the
+// single `nft -c -f` in nft_file.apply(), which validates the WHOLE generated
+// file, so one policy whose name carries a quote -- or simply runs long -- takes
+// down every rule pbr writes, not just its own.
+//
+// Verified against nftables 1.0.9: `'`, `;`, `\`, `{}`, `$` and even a literal
+// newline all parse; 128 bytes passes and 129 does not (the limit counts bytes,
+// so 65 two-byte characters already fail); a multi-byte sequence left incomplete
+// by the cut is accepted.
+function nft_comment(s) {
+	if (s == null) return '';
+	// The quote becomes an apostrophe rather than being dropped, so a name like
+	// `My "work" laptop` still reads the way its author wrote it. CR/LF/TAB
+	// become spaces because this same string is also written as a trailing
+	// `# comment` on a line of dnsmasq's nftset config, where an embedded
+	// newline would inject a config line of its own.
+	let clean = replace('' + s, /"/g, "'");
+	clean = replace(clean, /[\r\n\t]/g, ' ');
+	// A BYTE truncation, deliberately: ucode's length()/substr() count bytes and
+	// so does nft's limit, so the two agree. Do not "improve" this into a
+	// character-aware cut -- 64 two-byte characters would pass such a check at
+	// 128 characters while still handing nft 256 bytes, which is the very
+	// failure this guards against. A sequence left incomplete by the cut is
+	// accepted by nft (verified), so there is nothing to repair afterwards.
+	return (length(clean) > 128) ? substr(clean, 0, 128) : clean;
+}
+
 function inline_set(value) {
 	if (!value) return '';
 	let parts = split(trim('' + value), /\s+/);
@@ -105,6 +134,7 @@ return {
 	is_family_mismatch,
 	filter_options,
 	inline_set,
+	nft_comment,
 };
 
 }
