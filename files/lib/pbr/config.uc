@@ -156,16 +156,32 @@ function create_config(uci_mod, ubus_mod, pkg) {
 		if (int(cfg.uplink_ip_rules_priority) < 99) cfg.uplink_ip_rules_priority = '99';
 		if (int(cfg.uplink_ip_rules_priority) > 32765) cfg.uplink_ip_rules_priority = '32765';
 
-		// Build nft_set_flags string
+		// An nft time value is a run of <decimal><unit>, unit being ms, s, m, h
+		// or d -- `1h`, `6h`, `1h30m`, `100ms`. A bare number is NOT accepted,
+		// and neither is a `w` for weeks; both were checked against nftables
+		// 1.0.9 and the 1.1.6 in OpenWrt 25.12. UCI declares these two options
+		// a free string with no bound, so a typo went straight into the set
+		// declaration. Drop a value nft cannot use rather than emit it: these
+		// are tuning knobs, and a whole ruleset nft refuses -- which stops ALL
+		// policy routing -- is a far worse outcome than an ignored timeout.
+		// Same treatment as prefixlength above.
+		if (cfg.nft_set_timeout && !match(cfg.nft_set_timeout, /^([0-9]+(ms|s|m|h|d))+$/))
+			cfg.nft_set_timeout = '';
+		if (cfg.nft_set_gc_interval && !match(cfg.nft_set_gc_interval, /^([0-9]+(ms|s|m|h|d))+$/))
+			cfg.nft_set_gc_interval = '';
+
+		// Build nft_set_flags string. Flags ONLY: the set's default timeout is
+		// emitted once, below. Appending it here as well put `timeout` in the
+		// declaration twice.
 		let nft_set_flags = '';
 		let fi = cfg.nft_set_flags_interval;
 		let ft = cfg.nft_set_flags_timeout;
 		if (fi && ft) {
-			nft_set_flags = 'flags interval, timeout' + (cfg.nft_set_timeout ? '; timeout ' + cfg.nft_set_timeout : '');
+			nft_set_flags = 'flags interval, timeout';
 		} else if (fi && !ft) {
 			nft_set_flags = 'flags interval';
 		} else if (!fi && ft) {
-			nft_set_flags = 'flags timeout' + (cfg.nft_set_timeout ? '; timeout ' + cfg.nft_set_timeout : '');
+			nft_set_flags = 'flags timeout';
 		}
 
 		if (!cfg.nft_set_flags_timeout && !cfg.nft_set_timeout) cfg.nft_set_gc_interval = '';
@@ -177,9 +193,15 @@ function create_config(uci_mod, ubus_mod, pkg) {
 		if (cfg.nft_set_auto_merge) push(set_parts, 'auto-merge;');
 		if (cfg.nft_set_counter) push(set_parts, 'counter;');
 		if (nft_set_flags) push(set_parts, nft_set_flags + ';');
-		if (cfg.nft_set_gc_interval) push(set_parts, 'gc_interval "' + cfg.nft_set_gc_interval + '";');
+		// `gc-interval`, not `gc_interval`, and both values go in BARE. The
+		// quotes here were the shell version's own -- `gc_interval "$val";` in
+		// the old init script, where the shell ate them before nft saw the
+		// line. The ucode port copied them in as literal characters, which nft
+		// rejects with `unexpected quoted string, expecting string`. `policy`
+		// was ported correctly and is left alone.
+		if (cfg.nft_set_gc_interval) push(set_parts, 'gc-interval ' + cfg.nft_set_gc_interval + ';');
 		if (cfg.nft_set_policy) push(set_parts, 'policy ' + cfg.nft_set_policy + ';');
-		if (cfg.nft_set_timeout) push(set_parts, 'timeout "' + cfg.nft_set_timeout + '";');
+		if (cfg.nft_set_timeout) push(set_parts, 'timeout ' + cfg.nft_set_timeout + ';');
 		cfg._nft_set_params = ' ' + join(' ', set_parts) + ' ';
 	}
 
