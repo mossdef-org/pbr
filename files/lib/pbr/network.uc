@@ -232,6 +232,18 @@ function create_network(fs_mod, config, sh, pkg, platform, V) {
 		return '';
 	}
 
+	// Record a warning unless an identical one is already there. Both gateway
+	// helpers below rewrite their interface argument to the uplink of their own
+	// address family, so on the usual wan + wan6 pair -- one device, one
+	// upstream -- processing 'wan' and then 'wan6' produces the same warning,
+	// with the same info string, twice. Two identical lines read as two faults;
+	// one interface with no gateway is one warning.
+	function push_warning_once(warnings, code, info) {
+		for (let w in warnings)
+			if (w.code == code && w.info == info) return;
+		push(warnings, { code: code, info: info });
+	}
+
 	function get_gateway4(iface, dev, warnings) {
 		if (is_uplink6(iface)) iface = cfg.uplink_interface4;
 		let gw = network_get_gateway(iface);
@@ -248,7 +260,7 @@ function create_network(fs_mod, config, sh, pkg, platform, V) {
 			}
 			// Raise warning if no gw and not point-to-point
 			if (!gw && warnings && !is_p2p(dev))
-				push(warnings, { code: 'warningInterfaceRoutingUnknownGateway4', info: 'interface:' + iface + '; device:' + dev + ' ' });
+				push_warning_once(warnings, 'warningInterfaceRoutingUnknownGateway4', 'interface:' + iface + '; device:' + dev + ' ');
 		}
 		return gw;
 	}
@@ -275,7 +287,7 @@ function create_network(fs_mod, config, sh, pkg, platform, V) {
 			}
 			// Raise warning if no gw and not point-to-point
 			if (!gw && warnings && !is_p2p(dev))
-				push(warnings, { code: 'warningInterfaceRoutingUnknownGateway6', info: 'interface:' + iface + '; device:' + dev + ' ' });
+				push_warning_once(warnings, 'warningInterfaceRoutingUnknownGateway6', 'interface:' + iface + '; device:' + dev + ' ');
 		}
 		return gw;
 	}
