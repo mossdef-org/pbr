@@ -81,10 +81,17 @@ function create_sys(fs_mod, pkg) {
 		return system([pkg.ip_full, ...args]);
 	}
 
+	// Callers hand this an argument VECTOR too, but unlike ip() it cannot go to
+	// system() as an array: every caller is a command whose failure is expected
+	// and routine -- a route replace on an interface that has no gateway yet --
+	// so its stderr must be suppressed, and system() has no fd redirection (see
+	// run()). The shell therefore stays, and every element is quote()d instead,
+	// which is what keeps a value carrying a space or a shell metacharacter as
+	// one argv word. The recorded error carries the UNQUOTED join: that string
+	// is shown to the user, not executed.
 	function try_cmd(errors, ...args) {
-		let cmd = join(' ', args);
-		if (run(cmd) != 0) {
-			push(errors, { code: 'errorTryFailed', info: cmd });
+		if (run(join(' ', map(args, quote))) != 0) {
+			push(errors, { code: 'errorTryFailed', info: join(' ', args) });
 			return false;
 		}
 		return true;

@@ -171,6 +171,10 @@ let _captured = {};
 let _commands = [];
 let _argvs = [];
 
+/* Needles whose commands system() should report as failed. Empty by default:
+   the stub returns 0 for everything, which is what nearly every test wants. */
+let _failing = [];
+
 /* Select recorded commands: everything when needle is null, those containing
    needle when it is a string, those matching it when it is a regexp. */
 let commands_matching = (needle) => {
@@ -181,6 +185,22 @@ let commands_matching = (needle) => {
 		return filter(_commands, cmd => match(cmd, needle));
 
 	return filter(_commands, cmd => index(cmd, '' + needle) >= 0);
+};
+
+/* Same needle semantics, applied to one command as it is executed. Note the
+   needle sees the command line EXACTLY as it was handed to system(), which for
+   anything routed through sh.try_cmd() means every word is single-quoted: a
+   regexp like /route replace/ will not match `'route' 'replace'`, while the
+   bare substring "route" still does. */
+let command_fails = (cmd) => {
+	for (let needle in _failing) {
+		if (type(needle) == "regexp") {
+			if (match(cmd, needle)) return true;
+		} else if (index(cmd, '' + needle) >= 0) {
+			return true;
+		}
+	}
+	return false;
 };
 
 /* Prepend mocklib to REQUIRE_SEARCH_PATH */
@@ -266,7 +286,7 @@ global.mocklib = {
 
 	/* Drop everything recorded so far, so a test can record one phase at a
 	   time (e.g. clear after start_service() to assert on stop_service()) */
-	clear_commands: () => { _commands = []; _argvs = []; },
+	clear_commands: () => { _commands = []; _argvs = []; _failing = []; },
 
 	/* Read what system() was called with WITHOUT the join(' ') flattening that
 	   commands() applies -- an array call is returned as an array. Needed to
@@ -274,6 +294,14 @@ global.mocklib = {
 	   rather than being re-split by a shell; commands() cannot see that
 	   difference, since ['a b','c'] and ['a','b','c'] join identically. */
 	argvs: () => [ ..._argvs ],
+
+	/* Make system() return non-zero for commands matching this needle, so an
+	   error path that only runs on a failed command can be exercised. Same
+	   argument as commands(): a string matches as a substring, a regexp is
+	   matched against the command line. Call it more than once to fail more
+	   than one shape of command; clear_commands() resets the list along with
+	   the recording. */
+	fail_command: (needle) => { push(_failing, needle); },
 };
 
 /* Override stdlib functions */
@@ -288,6 +316,10 @@ global.system = function(argv, timeout) {
 
 	/* Return 1 for tty checks so output goes to logger, not stderr */
 	if (type(argv) == "string" && index(argv, "[ -t ") >= 0)
+		return 1;
+
+	if (length(_failing) &&
+	    command_fails(type(argv) == "array" ? join(' ', argv) : '' + argv))
 		return 1;
 
 	return 0;
