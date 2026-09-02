@@ -91,19 +91,6 @@ awk '
 ' "$patch_dir/pbr.uc.tmp" "$patch_dir/pbr.uc.tmp" > "$patch_dir/pbr.uc"
 rm -f "$patch_dir/pbr.uc.tmp"
 
-# Some ucode builds use POSIX ERE which lacks non-capturing groups (?:...).
-# Convert them to plain groups (...) and adjust capture-group indices.
-# get_rt_tables_id: (?:^|\\n)(\d+)...(?:\\n|$) with m[1] → (^|\\n)(\d+)...(\\n|$) with m[2]
-sed -i \
-	-e "s|regexp('(?:|regexp('(|g" \
-	-e "s|iface + '(?:|iface + '(|g" \
-	-e '/get_rt_tables_id/,/^};/ s/m\[1\]/m[2]/' \
-	"$patch_dir/pbr.uc"
-# support(): regex literal (?:option|list) → (option|list) — index shift OK (not tested)
-sed -i \
-	-e 's/(?:option/((option/' \
-	"$patch_dir/pbr.uc"
-
 trap "rm -rf '$patch_dir'" EXIT
 
 # Search paths: patched pbr.uc first, then tests/lib (for mocklib), then original source
