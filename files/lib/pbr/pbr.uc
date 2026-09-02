@@ -166,7 +166,7 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 			push(state.errors, { code: 'errorDefaultFw4TableMissing', info: 'fw4' });
 			health_fail = true;
 		}
-		if (net.is_config_enabled('dns_policy') || net.is_tor_running()) {
+		if (net.is_config_enabled('dns_policy') || net.is_tor_configured()) {
 			if (!nft.nft_check_element('chain', 'dstnat')) {
 				push(state.errors, { code: 'errorDefaultFw4ChainMissing', info: 'dstnat' });
 				health_fail = true;
@@ -573,6 +573,16 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 	
 			if (net.is_tor(iface)) {
 				let ipv4_error = false, ipv6_error = false;
+				// Belt and braces. is_supported_interface() already rejects a
+				// Tor policy on a box with no torrc, so this should be
+				// unreachable -- but an empty port renders as 'redirect to :'
+				// and nft rejects the ENTIRE file for it, taking every other
+				// policy down with it. Never let one out of this function.
+				if (!env.tor_dns_port || !env.tor_traffic_port) {
+					process_policy_error = true;
+					push(state.errors, { code: 'errorPolicyUnknownInterface', info: name });
+					return 1;
+				}
 				chain = 'dstnat';
 				let p4_base = nft_insert + ' rule inet ' + nft_table + ' ' + nft_prefix + '_' + chain +
 					rule_params + ' meta nfproto ipv4 ' + param4;
@@ -2041,7 +2051,7 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 				interface_process.create(s['.name']);
 			});
 			interface_process.tor('destroy');
-			if (net.is_tor_running()) interface_process.tor('create');
+			if (net.is_tor_configured()) interface_process.tor('create');
 			interface_process.create_global_rules();
 			sh.run(pkg.ip_full + ' route flush cache');
 			end_time = time();

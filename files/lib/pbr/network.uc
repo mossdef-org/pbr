@@ -162,10 +162,22 @@ function create_network(fs_mod, config, sh, pkg, platform, V) {
 		return V.str_contains(cfg.lan_device, d);
 	}
 	function is_ignored_interface(iface) { return V.str_contains_word(cfg.ignored_interface, iface); }
-	function is_tor_running() {
+	// Tor is usable as a policy target as soon as it is CONFIGURED: the
+	// redirect ports come out of torrc, not out of the running daemon. pbr is
+	// START=20 and OpenWrt's tor is START=50, so at boot the service is never
+	// up yet -- gating the port lookup on it left interface_process.tor()
+	// unrun, the ports empty, and every Tor rule interpolating 'redirect to :',
+	// which nft rejects for the whole file.
+	function is_tor_configured() {
 		if (is_ignored_interface('tor')) return false;
 		let content = readfile(pkg.tor_config_file);
-		if (!content || content == '') return false;
+		return !!(content && content != '');
+	}
+	// Whether the daemon is actually up. Fine for reporting, but do NOT gate
+	// rule generation on it: the ports live in torrc, the emitter keys off the
+	// policy's interface name alone, and pbr starts before tor at boot.
+	function is_tor_running() {
+		if (!is_tor_configured()) return false;
 		let svc = config.ubus_call('service', 'list', { name: 'tor' });
 		if (!svc?.tor?.instances) return false;
 		for (let k in keys(svc.tor.instances)) {
@@ -196,6 +208,10 @@ function create_network(fs_mod, config, sh, pkg, platform, V) {
 	function is_supported_interface(iface) {
 		if (!iface) return false;
 		if (is_lan(iface) || is_disabled_interface(iface)) return false;
+		// Checked ahead of supported_interface: without a torrc there are no
+		// ports to redirect to, so a Tor policy cannot produce a usable rule
+		// however the interface was listed.
+		if (is_tor(iface)) return is_tor_configured();
 		if (V.str_contains_word(cfg.supported_interface, iface)) return true;
 		if (!is_ignored_interface(iface) && (is_uplink(iface) || is_wan(iface) || is_tunnel(iface))) return true;
 		if (is_ignore_target(iface)) return true;
@@ -424,7 +440,7 @@ function create_network(fs_mod, config, sh, pkg, platform, V) {
 		is_point_to_point, is_xfrm, is_p2p,
 		is_wan, is_uplink, is_uplink4, is_uplink6, is_split_uplink,
 		is_default_dev, is_disabled_interface, is_lan,
-		is_ignored_interface, is_tor_running,
+		is_ignored_interface, is_tor_running, is_tor_configured,
 		is_ignore_target, is_netifd_table, is_netifd_interface,
 		is_mwan4_interface, is_netifd_interface_default,
 		is_supported_protocol, is_mwan4_strategy,
