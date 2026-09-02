@@ -9,7 +9,7 @@ let result = pbr.start_service(['on_start']);
 // result should be non-null (procd data)
 let checks = [
 	['result_not_null',    result != null],
-	['has_compat',         result.packageCompat == 36],
+	['has_compat',         result.packageCompat == 37],
 	['has_gateways',       type(result.gateways) == 'array'],
 	['has_errors',         type(result.errors) == 'array'],
 	['has_warnings',       type(result.warnings) == 'array'],

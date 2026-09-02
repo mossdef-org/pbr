@@ -31,7 +31,7 @@ else
 fi
 
 readonly packageName='pbr'
-readonly initCompat='36'
+readonly initCompat='37'
 readonly _ucode="ucode -S -L /lib/${packageName} -L /lib/mwan4 /lib/${packageName}/cli.uc --"
 
 # shellcheck disable=SC1091

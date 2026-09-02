@@ -748,6 +748,38 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 			push(state.errors, { code: 'errorPolicyNoInterface', info: name });
 			output.fail(); return 1;
 		}
+		// 'proto' is a PORT QUALIFIER, not a match of its own: it only ever
+		// reaches a rule as a prefix on sport/dport. Set without a port it is
+		// dropped and the policy routes every protocol; set to a protocol that
+		// has no ports AND given a port it emits e.g. 'icmp dport { 53 }', which
+		// nft refuses -- taking the entire ruleset, and all policy routing, with
+		// it. The LuCI dropdown is built from /etc/protocols, so 41 of the 46
+		// choices it offers are one or the other of those.
+		if (proto) {
+			for (let p in split(proto, /\s+/)) {
+				if (!p) continue;
+				// .info stays a single string: the procd emission below writes it
+				// with json_add_string, so an array would reach the WebUI as
+				// '[ "name", "proto" ]'.
+				let who = "'" + name + "' (" + p + ")";
+				// Why one warns and the other rejects: an ignored proto still
+				// produces a VALID rule -- too broad, but the router keeps
+				// routing, so the user can be told and left alone. A port on a
+				// portless protocol produces a rule nft refuses, and the whole
+				// file goes with it; warning about that would annotate an
+				// outage rather than prevent one, so the policy is dropped and
+				// every other one survives.
+				if (net.proto_has_ports(p)) {
+					if (!src_port && !dest_port)
+						push(state.warnings, { code: 'warningPolicyProtoNoPort', info: who });
+				} else if (src_port || dest_port) {
+					push(state.errors, { code: 'errorPolicyProtoPortNotSupported', info: who });
+					output.fail(); return 1;
+				} else {
+					push(state.warnings, { code: 'warningPolicyProtoPortless', info: who });
+				}
+			}
+		}
 		if (net.is_tor(interface_name)) {
 			// Tor is a dstnat redirect, not a routed interface: the rules below
 			// hardcode ports 53/80/443 and force the dstnat chain, so these
@@ -919,7 +951,7 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 				pkg.nft_ipv4_flag + ' protocol icmp' + rule_params + ' goto ' + idata.chain_name);
 			if (cfg.ipv6_enabled)
 				nft.nft_add('add rule inet ' + nft_table + ' ' + nft_prefix + '_output ' +
-					pkg.nft_ipv6_flag + ' protocol icmp' + rule_params + ' goto ' + idata.chain_name);
+					pkg.nft_ipv6_flag + ' nexthdr icmpv6' + rule_params + ' goto ' + idata.chain_name);
 		}
 
 		if (dev4) {
@@ -1832,7 +1864,7 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 								pkg.nft_ipv4_flag + ' protocol icmp' + rule_params + ' goto ' + nft_prefix + '_mark_' + _mark);
 						if (!net.is_split_uplink() || !net.is_uplink4(iface))
 							nft.nft_add('add rule inet ' + nft_table + ' ' + nft_prefix + '_output ' +
-								pkg.nft_ipv6_flag + ' protocol icmp' + rule_params + ' goto ' + nft_prefix + '_mark_' + _mark);
+								pkg.nft_ipv6_flag + ' nexthdr icmpv6' + rule_params + ' goto ' + nft_prefix + '_mark_' + _mark);
 					}
 					output.okb();
 				} else if (action == 'remove' || action == 'uninstall') {

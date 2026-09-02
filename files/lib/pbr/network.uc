@@ -204,6 +204,16 @@ function create_network(fs_mod, config, sh, pkg, platform, V) {
 		if (!proto) return false;
 		return !!env.protocols[lc(proto)];
 	}
+	// nft can only match a port on a protocol that HAS one. The policy dropdown
+	// is built from every line of /etc/protocols (46 of them on a stock 25.12),
+	// so the other 41 are selectable and cannot work: with a port they produce
+	// 'icmp dport ...', which nft refuses and which takes the whole ruleset with
+	// it; without one the protocol is dropped from the rule entirely.
+	// Verified against nftables 1.1.6 -- these five are accepted, the rest are not.
+	const proto_with_ports = { tcp: true, udp: true, sctp: true, dccp: true, udplite: true };
+	function proto_has_ports(proto) {
+		return !!proto_with_ports[lc(proto || '')];
+	}
 	function is_mwan4_strategy(iface) { return iface && index(iface, 'mwan4_strategy_') == 0; }
 	function is_supported_interface(iface) {
 		if (!iface) return false;
@@ -443,7 +453,7 @@ function create_network(fs_mod, config, sh, pkg, platform, V) {
 		is_ignored_interface, is_tor_running, is_tor_configured,
 		is_ignore_target, is_netifd_table, is_netifd_interface,
 		is_mwan4_interface, is_netifd_interface_default,
-		is_supported_protocol, is_mwan4_strategy,
+		is_supported_protocol, proto_has_ports, is_mwan4_strategy,
 		is_supported_interface, is_config_enabled,
 		get_gateway4, get_gateway6,
 		get_ipaddr4, get_ipaddr6,

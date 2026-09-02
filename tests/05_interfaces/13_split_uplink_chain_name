@@ -67,7 +67,9 @@ push(checks, ['no_dangling_goto', length(dangling) == 0]);
 // The DSCP and ICMP rules are built from the same chain_name and are not
 // policy-driven, so they reach this with two config options and no policy.
 let dscp = filter(lines, l => index(l, 'dscp 10') >= 0);
-let icmp = filter(lines, l => index(l, 'protocol icmp') >= 0);
+// IPv4 emits 'ip protocol icmp'; IPv6 has no 'protocol' field, so it emits
+// 'ip6 nexthdr icmpv6'. Match both or this silently checks only half.
+let icmp = filter(lines, l => index(l, 'protocol icmp') >= 0 || index(l, 'nexthdr icmpv6') >= 0);
 push(checks, ['dscp_rules_emitted', length(dscp) == 2]);
 push(checks, ['icmp_rules_emitted', length(icmp) == 2]);
 push(checks, ['dscp_targets_uplink_chain',
