@@ -1,4 +1,4 @@
-Testing the two ways a policy's 'proto' option goes wrong.
+Testing the ways a policy's 'proto' and 'chain' options go wrong.
 
 'proto' is a PORT QUALIFIER: it only ever reaches a rule as a prefix on
 sport/dport (files/lib/pbr/pbr.uc), and pbr's own defaulting says as much --
@@ -18,6 +18,19 @@ actionable -- for a protocol that does have ports, '0-65535' matches all of it.
 The LuCI dropdown is built from /etc/protocols (46 entries on stock 25.12) and
 only tcp/udp/sctp/dccp/udplite can carry a port, so 41 of its choices land in
 one of these two cases.
+
+'chain' fails the same way as case 2. pbr creates pbr_dstnat plus the chains in
+chains_list -- prerouting, forward and output -- and nothing else, so a policy
+naming any other chain emits a rule into a chain that does not exist. nft
+answers "No such file or directory" and, again, refuses the whole file. The
+README documented 'input' and 'postrouting' for years and neither has existed
+since before 1.2.2, so this was reachable by following the documentation; a
+typo does it too. LuCI offers only the three, but UCI takes any string.
+
+'dstnat' is not in chains_list yet IS created -- files/lib/pbr/nft.uc creates
+['dstnat', ...split(chains_list, ' ')] -- and a policy naming it works today,
+so the check is against the chains that actually exist rather than against the
+documented three -- otherwise a working config would start failing.
 
 -- File uci/pbr.json --
 {
@@ -86,6 +99,38 @@ one of these two cases.
 			"interface": "wan",
 			"dest_addr": "192.0.2.15",
 			"proto": "ICMP"
+		},
+		{
+			".name": "policy_bad_chain",
+			"name": "Bad Chain",
+			"enabled": "1",
+			"interface": "wan",
+			"dest_addr": "192.0.2.16",
+			"chain": "input"
+		},
+		{
+			".name": "policy_good_chain",
+			"name": "Good Chain",
+			"enabled": "1",
+			"interface": "wan",
+			"dest_addr": "192.0.2.17",
+			"chain": "forward"
+		},
+		{
+			".name": "policy_upper_chain",
+			"name": "Upper Chain",
+			"enabled": "1",
+			"interface": "wan",
+			"dest_addr": "192.0.2.18",
+			"chain": "FORWARD"
+		},
+		{
+			".name": "policy_upper_dstnat",
+			"name": "Upper Dstnat",
+			"enabled": "1",
+			"interface": "wan",
+			"dest_addr": "192.0.2.19",
+			"chain": "DSTNAT"
 		}
 	]
 }
@@ -114,7 +159,6 @@ let checks = [
 	// 1. a port-capable protocol with no ports: warn, and keep routing
 	['udp_noport_warns',   coded(result.warnings, 'warningPolicyProtoNoPort', 'Udp No Port')],
 	['udp_noport_routed',  length(rules_for('Udp No Port')) > 0],
-	// the warning names the protocol, so the message can say what to do
 	// the protocol is named in .info so the message can point at the right one
 	['warning_names_proto', length(filter(result.warnings || [], w =>
 		w.code == 'warningPolicyProtoNoPort' &&
@@ -148,7 +192,29 @@ let checks = [
 	['mixed_case_normalised',   length(filter(result.warnings || [], w =>
 		'' + w.info == "'Mixed Case Proto' (udp)")) == 1],
 
-	// 6. rejecting one policy must not take the others with it
+	// 6. a chain pbr does not create cannot hold a rule: nft answers "No such
+	//    file or directory" and rejects the whole file. 'input' and
+	//    'postrouting' were documented for years and have never existed here,
+	//    and a plain typo does the same thing -- so reject the policy instead.
+	['bad_chain_rejected',  coded(result.errors, 'errorPolicyUnknownChain', 'Bad Chain')],
+	['bad_chain_no_rule',   length(rules_for('Bad Chain')) == 0],
+	['no_pbr_input_chain',  index(nft, 'pbr_input') < 0],
+	// a chain that does exist is untouched
+	['good_chain_kept',     length(filter(rules_for('Good Chain'),
+		l => index(l, 'pbr_forward') >= 0)) > 0],
+	['good_chain_no_error', !coded(result.errors, 'errorPolicyUnknownChain', 'Good Chain')],
+	// chain names are matched case-insensitively, like proto above: the guard
+	// lowercases before its exact-word lookup, and policy_routing() lowercases
+	// before building the rule, so 'FORWARD' and 'DSTNAT' -- the latter outside
+	// chains_list -- are accepted and land in their lowercase chains
+	['upper_chain_kept',    length(filter(rules_for('Upper Chain'),
+		l => index(l, 'pbr_forward') >= 0)) > 0],
+	['upper_chain_no_error', !coded(result.errors, 'errorPolicyUnknownChain', 'Upper Chain')],
+	['upper_dstnat_kept',   length(filter(rules_for('Upper Dstnat'),
+		l => index(l, 'pbr_dstnat') >= 0)) > 0],
+	['upper_dstnat_no_error', !coded(result.errors, 'errorPolicyUnknownChain', 'Upper Dstnat')],
+
+	// 7. rejecting one policy must not take the others with it
 	['others_survive',     length(rules_for('Udp No Port')) > 0 &&
 	                       length(rules_for('Udp With Port')) > 0],
 ];
@@ -162,9 +228,9 @@ for (let c in checks) {
 		printf("FAIL: %s\n", c[0]);
 	}
 }
-printf("proto_without_ports: %d/%d passed\n", pass, pass + fail);
+printf("proto_and_chain_validation: %d/%d passed\n", pass, pass + fail);
 -- End --
 
 -- Expect stdout --
-proto_without_ports: 15/15 passed
+proto_and_chain_validation: 24/24 passed
 -- End --

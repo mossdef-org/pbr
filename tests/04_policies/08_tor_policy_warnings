@@ -3,7 +3,9 @@ Testing that a Tor policy warns about the options pbr silently discards
 supported Tor policy and is deliberately NOT warned about: whether it works
 depends on DNS reaching Tor, which pbr cannot see, so a warning would fire on
 correct setups too. Such a policy must still build its set and stay silent.
-No policy is ever rejected.
+No policy is ever rejected -- including one naming a chain pbr does not
+create: Tor forces its own rules into dstnat and ignores 'chain', so the
+unknown-chain guard must not take a Tor policy down, only warn.
 
 -- File uci/pbr.json --
 {
@@ -59,6 +61,18 @@ No policy is ever rejected.
 			"dest_port": "",
 			"proto": "",
 			"chain": ""
+		},
+		{
+			".name": "policy_tor_nochain",
+			"name": "Tor Missing Chain",
+			"enabled": "1",
+			"interface": "tor",
+			"src_addr": "192.168.1.53",
+			"dest_addr": "",
+			"src_port": "",
+			"dest_port": "",
+			"proto": "",
+			"chain": "input"
 		}
 	]
 }
@@ -124,6 +138,12 @@ let checks = [
 		index('' + w.info, 'tor') >= 0)) == 0],
 	// warnings only -- no policy is rejected
 	['not_rejected',       index(errors, 'errorPolicyUnknownInterface') < 0],
+	// A chain that does not exist ('input') is harmless on a Tor policy -- Tor
+	// forces dstnat -- so it must be warned about like any other chain, not
+	// rejected by the unknown-chain guard, and its rules must still be built.
+	['nochain_warned',       warned('warningTorUnsetChainNft', 'Tor Missing Chain')],
+	['nochain_not_rejected', index(errors, 'errorPolicyUnknownChain') < 0],
+	['nochain_rules_built',  index(nft, '192.168.1.53') >= 0],
 ];
 
 let pass = 0, fail = 0;
@@ -139,5 +159,5 @@ printf("tor_policy_warnings: %d/%d passed\n", pass, pass + fail);
 -- End --
 
 -- Expect stdout --
-tor_policy_warnings: 12/12 passed
+tor_policy_warnings: 15/15 passed
 -- End --
