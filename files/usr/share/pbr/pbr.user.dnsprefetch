@@ -204,9 +204,12 @@ else
 		done < "$pipe_nslookup"
 
 		# NXDOMAIN is a valid DNS reply and may be permanent or intentional. Keep
-		# counting it, but reserve the failure marker for timeouts, SERVFAIL and
-		# other cases where no usable answer was received.
-		[ "${hard_errors:-0}" -eq '0' ] && result="$__OK__" || result="$__FAIL__"
+		# counting it without failing a partly successful run. Timeouts, SERVFAIL
+		# and other hard errors fail immediately; an all-NXDOMAIN run also fails
+		# because it did not resolve a single domain into a set.
+		result="$__OK__"
+		[ "${hard_errors:-0}" -ne '0' ] && result="$__FAIL__"
+		[ "${entries:-0}" -gt '0' ] && [ "${errors:-0}" -eq "$entries" ] && result="$__FAIL__"
 		output "Finished resolving $entries domain names in policies (${errors:-0} failed) $result"
 	}
 
