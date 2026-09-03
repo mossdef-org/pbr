@@ -36,8 +36,11 @@
 # pbr waits for every process this file leaves running -- a plain "&" is not
 # enough, and a background job that waits for pbr to finish deadlocks it (a 60s
 # wait here made "/etc/init.d/pbr reload" take 62s instead of 3s). So the first
-# pass only re-executes this file in its own session and returns immediately;
-# all of the real work happens in that detached copy, after pbr has moved on.
+# pass records the pbr ucode worker's pid, re-executes this file in its own
+# session and returns immediately. The detached copy waits for that worker to
+# exit: only then have fw4 reload, set cleanup and the resolver restart/cache
+# flush all completed. Watching the nft file is too early because pbr copies it
+# before running fw4; a fixed delay raced dnsmasq on large configurations.
 #
 # The service sources this file, so it cannot discover its own path ($0 is the
 # sourcing shell). Update this if you install it somewhere else.
@@ -45,7 +48,9 @@ _dnsprefetch_self='/usr/share/pbr/pbr.user.dnsprefetch'
 
 if [ -z "$PBR_DNSPREFETCH_CHILD" ]; then
 	if [ -f "$_dnsprefetch_self" ]; then
-		PBR_DNSPREFETCH_CHILD=1 setsid /bin/sh "$_dnsprefetch_self" </dev/null >/dev/null 2>&1 &
+		PBR_DNSPREFETCH_CHILD=1 \
+		PBR_DNSPREFETCH_PARENT_PID="$PPID" \
+		setsid /bin/sh "$_dnsprefetch_self" </dev/null >/dev/null 2>&1 &
 	else
 		# The only failure this script cannot report from the detached copy,
 		# since there is nothing to detach. pbr logs that it ran the file but
@@ -76,6 +81,22 @@ else
 	# might run this, and being generous is free -- each loop returns the
 	# moment its condition is met, so a fast router never spends the budget.
 	# Only a genuine failure waits it out, and then the abort is logged.
+	pbr_run_finished() {
+		local timeout_pbr_run='300'
+		local pbr_pid="$1"
+
+		case "$pbr_pid" in
+			''|*[!0-9]*|0|1) return 2 ;;
+		esac
+
+		while kill -0 "$pbr_pid" 2>/dev/null; do
+			[ "$timeout_pbr_run" -eq '0' ] && return 1
+			sleep '1' && timeout_pbr_run="$((timeout_pbr_run - 1))"
+		done
+	}
+
+	# Fallback for an explicitly forced child invocation, where there is no pbr
+	# worker pid to follow. Normal service starts never take this path.
 	#
 	# Modification time of the ruleset pbr installs, or the empty string before
 	# the first one exists.
@@ -156,14 +177,15 @@ else
 	}
 
 	nslookup_tracker() {
-		local entries errors
+		local entries errors result
 
 		while read -r rc; do
 			entries="$((entries + 1))"
 			[ "$rc" -eq '1' ] && errors="$((errors + 1))"
 		done < "$pipe_nslookup"
 
-		output "Finished resolving $entries domain names in policies (${errors:-0} failed) $__OK__"
+		[ "${errors:-0}" -eq '0' ] && result="$__OK__" || result="$__FAIL__"
+		output "Finished resolving $entries domain names in policies (${errors:-0} failed) $result"
 	}
 
 	main() {
@@ -180,24 +202,24 @@ else
 			return 1
 		}
 
-		stamp_before="$(nft_stamp)"
 		# Nothing else cleans this up if the prefetch is killed part-way.
 		trap 'rm -f "$pipe_nslookup"' EXIT HUP INT TERM
 		mkfifo "$pipe_nslookup"
 
-		nft_file_installed "$stamp_before" || {
-			output "Timed out waiting for $packageName to install its ruleset, $msg_abort $__FAIL__"
-			rc='1'
-		}
-		# Give pbr the rest of its run: it reaps orphaned sets and drops
-		# addresses for domains whose policy changed just after installing the
-		# ruleset, and either of those would discard what we resolve here.
-		# Both are a handful of nft calls issued right after the ruleset goes
-		# in, so this does not have to cover pbr's slow work -- the two long
-		# waits either side of it do. It is padded for a slow router all the
-		# same, and costs nothing on a fast one: it runs in the detached copy,
-		# never in the reload.
-		[ "$rc" -eq '0' ] && sleep "$settle"
+		if [ -n "$PBR_DNSPREFETCH_PARENT_PID" ]; then
+			pbr_run_finished "$PBR_DNSPREFETCH_PARENT_PID" || {
+				output "Timed out waiting for $packageName to finish its run, $msg_abort $__FAIL__"
+				rc='1'
+			}
+		else
+			stamp_before="$(nft_stamp)"
+			nft_file_installed "$stamp_before" || {
+				output "Timed out waiting for $packageName to install its ruleset, $msg_abort $__FAIL__"
+				rc='1'
+			}
+			[ "$rc" -eq '0' ] && sleep "$settle"
+		fi
+
 		[ "$rc" -eq '0' ] && [ ! -f "$packageDnsmasqFile" ] && {
 			output "File $packageDnsmasqFile not found, $msg_abort $__FAIL__"
 			rc='1'
@@ -220,16 +242,23 @@ else
 			# whichever path ran, and whatever the timing. Only ever after
 			# dnsmasq_ready() -- see the note there.
 			killall -q -s HUP dnsmasq
-			sleep '1'
-			nslookup_tracker & exec 3>"$pipe_nslookup"
-			(
-				output "Resolving domain names in policies..."
-				while IFS='/' read -r _ domain _; do
-					[ -n "$domain" ] && run_nslookup "$domain" &
-				done < "$packageDnsmasqFile"
-				wait
-			)
-			exec 3>&-
+			# On large hosts/adblock configurations SIGHUP itself can take longer
+			# than the old one-second delay. A reply proves the final daemon has
+			# completed the cache flush and returned to its event loop.
+			if ! dnsmasq_ready; then
+				output "Dnsmasq is not answering after cache flush, $msg_abort $__FAIL__"
+				rc='1'
+			else
+				nslookup_tracker & exec 3>"$pipe_nslookup"
+				(
+					output "Resolving domain names in policies..."
+					while IFS='/' read -r _ domain _; do
+						[ -n "$domain" ] && run_nslookup "$domain" &
+					done < "$packageDnsmasqFile"
+					wait
+				)
+				exec 3>&-
+			fi
 		}
 
 		rm -f "$pipe_nslookup"
