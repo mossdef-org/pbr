@@ -49,8 +49,15 @@ _dnsprefetch_self='/usr/share/pbr/pbr.user.dnsprefetch'
 
 if [ -z "$PBR_DNSPREFETCH_CHILD" ]; then
 	if [ -f "$_dnsprefetch_self" ]; then
+		# $PPID is pbr's ucode worker: the service hands the user-file wrapper
+		# to /bin/sh -c, so the shell sourcing this file is a direct child of the
+		# worker, and sourcing does not fork. Confirm it rather than trust it --
+		# run by hand, $PPID is a login shell that may never exit.
+		_dnsprefetch_parent="$PPID"
+		tr '\0' ' ' < "/proc/$PPID/cmdline" 2>/dev/null |
+			grep -q '/lib/pbr/cli\.uc' || _dnsprefetch_parent=''
 		PBR_DNSPREFETCH_CHILD=1 \
-		PBR_DNSPREFETCH_PARENT_PID="$PPID" \
+		PBR_DNSPREFETCH_PARENT_PID="$_dnsprefetch_parent" \
 		setsid /bin/sh "$_dnsprefetch_self" </dev/null >/dev/null 2>&1 &
 	else
 		# The only failure this script cannot report from the detached copy,
@@ -257,10 +264,9 @@ else
 		}
 
 		# On the parent-pid path pbr has already restarted dnsmasq or sent the
-		# cache-flushing HUP before its worker exited. Repeating it would force a
-		# second expensive re-read of large hosts/adblock configurations. The
-		# fallback cannot make that guarantee, so retain the flush there. Wait one
-		# second before probing to ensure the first answer cannot race ahead of
+		# cache-flushing HUP before its worker exited, so repeating it is redundant.
+		# The fallback cannot make that guarantee, so retain the flush there. Wait
+		# one second before probing to ensure the first answer cannot race ahead of
 		# dnsmasq handling the signal.
 		[ "$rc" -eq '0' ] && [ "$used_fallback" -eq '1' ] && {
 			killall -q -s HUP dnsmasq
