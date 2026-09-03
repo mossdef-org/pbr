@@ -38,9 +38,10 @@
 # wait here made "/etc/init.d/pbr reload" take 62s instead of 3s). So the first
 # pass records the pbr ucode worker's pid, re-executes this file in its own
 # session and returns immediately. The detached copy waits for that worker to
-# exit: only then have fw4 reload, set cleanup and the resolver restart/cache
-# flush all completed. Watching the nft file is too early because pbr copies it
-# before running fw4; a fixed delay raced dnsmasq on large configurations.
+# exit: only then have fw4 reload, set cleanup and pbr's resolver restart/cache
+# flush request all completed. dnsmasq may still be applying that request, so
+# its readiness is probed below. Watching the nft file is too early because pbr
+# copies it before running fw4; a fixed delay raced dnsmasq on large setups.
 #
 # The service sources this file, so it cannot discover its own path ($0 is the
 # sourcing shell). Update this if you install it somewhere else.
@@ -89,17 +90,17 @@ else
 			''|*[!0-9]*|0|1) return 2 ;;
 		esac
 
+		output "Waiting for $packageName run (pid $pbr_pid) to finish..."
 		while kill -0 "$pbr_pid" 2>/dev/null; do
 			[ "$timeout_pbr_run" -eq '0' ] && return 1
 			sleep '1' && timeout_pbr_run="$((timeout_pbr_run - 1))"
 		done
 	}
 
-	# Fallback for an explicitly forced child invocation, where there is no pbr
-	# worker pid to follow. Normal service starts never take this path.
-	#
-	# Modification time of the ruleset pbr installs, or the empty string before
-	# the first one exists.
+	# The mtime fallback is used only when there is no usable pbr worker pid to
+	# follow, such as an explicitly forced child invocation. Normal service starts
+	# never take this path. Return the ruleset's modification time, or the empty
+	# string before the first one exists.
 	nft_stamp() {
 		[ -f "$packageNftFile" ] || return 0
 		date -r "$packageNftFile" +%s 2>/dev/null
@@ -120,6 +121,16 @@ else
 			[ "$timeout_nft_file" -eq '0' ] && return 1
 			sleep '1' && timeout_nft_file="$((timeout_nft_file - 1))"
 		done
+	}
+
+	pbr_ruleset_fallback_finished() {
+		local settle='15'
+		local stamp_before
+
+		output "$packageName worker pid unavailable, using ruleset fallback..."
+		stamp_before="$(nft_stamp)"
+		nft_file_installed "$stamp_before" || return 1
+		sleep "$settle"
 	}
 
 	nft_ready() {
@@ -173,25 +184,30 @@ else
 		output="$(nslookup "$1" 127.0.0.1)" && { echo '0' > "$pipe_nslookup"; return; }
 		reason="$(printf '%s' "$output" | grep -Eo -m 1 'NXDOMAIN|SERVFAIL|timed out')" && \
 		output "$_WARNING_ Lookup failed for $1 ($reason)"
-		echo '1' > "$pipe_nslookup"
+		[ "$reason" = 'NXDOMAIN' ] && echo '2' > "$pipe_nslookup" || echo '1' > "$pipe_nslookup"
 	}
 
 	nslookup_tracker() {
-		local entries errors result
+		local entries errors hard_errors result
 
 		while read -r rc; do
 			entries="$((entries + 1))"
-			[ "$rc" -eq '1' ] && errors="$((errors + 1))"
+			[ "$rc" -ne '0' ] && errors="$((errors + 1))"
+			[ "$rc" -eq '1' ] && hard_errors="$((hard_errors + 1))"
 		done < "$pipe_nslookup"
 
-		[ "${errors:-0}" -eq '0' ] && result="$__OK__" || result="$__FAIL__"
+		# NXDOMAIN is a valid DNS reply and may be permanent or intentional. Keep
+		# counting it, but reserve the failure marker for timeouts, SERVFAIL and
+		# other cases where no usable answer was received.
+		[ "${hard_errors:-0}" -eq '0' ] && result="$__OK__" || result="$__FAIL__"
 		output "Finished resolving $entries domain names in policies (${errors:-0} failed) $result"
 	}
 
 	main() {
 		local msg_abort='domain names in policies not resolved'
-		local settle='15'
-		local stamp_before domain
+		local barrier_rc='2'
+		local used_fallback='0'
+		local domain
 		local rc='0'
 
 		# $resolverSetSupported is not available here; read the setting pbr
@@ -207,18 +223,24 @@ else
 		mkfifo "$pipe_nslookup"
 
 		if [ -n "$PBR_DNSPREFETCH_PARENT_PID" ]; then
-			pbr_run_finished "$PBR_DNSPREFETCH_PARENT_PID" || {
+			pbr_run_finished "$PBR_DNSPREFETCH_PARENT_PID"
+			barrier_rc="$?"
+		fi
+
+		case "$barrier_rc" in
+			0) ;;
+			2)
+				used_fallback='1'
+				pbr_ruleset_fallback_finished || {
+					output "Timed out waiting for $packageName to install its ruleset, $msg_abort $__FAIL__"
+					rc='1'
+				}
+				;;
+			*)
 				output "Timed out waiting for $packageName to finish its run, $msg_abort $__FAIL__"
 				rc='1'
-			}
-		else
-			stamp_before="$(nft_stamp)"
-			nft_file_installed "$stamp_before" || {
-				output "Timed out waiting for $packageName to install its ruleset, $msg_abort $__FAIL__"
-				rc='1'
-			}
-			[ "$rc" -eq '0' ] && sleep "$settle"
-		fi
+				;;
+		esac
 
 		[ "$rc" -eq '0' ] && [ ! -f "$packageDnsmasqFile" ] && {
 			output "File $packageDnsmasqFile not found, $msg_abort $__FAIL__"
@@ -234,31 +256,31 @@ else
 			rc='1'
 		}
 
-		[ "$rc" -eq '0' ] && {
-			# dnsmasq only writes to an nft set on an upstream reply, so a name
-			# still in its cache would be answered without filling the set.
-			# pbr has already cleared the cache by this point on both of its
-			# paths, but doing it here too costs nothing and keeps this correct
-			# whichever path ran, and whatever the timing. Only ever after
-			# dnsmasq_ready() -- see the note there.
+		# On the parent-pid path pbr has already restarted dnsmasq or sent the
+		# cache-flushing HUP before its worker exited. Repeating it would force a
+		# second expensive re-read of large hosts/adblock configurations. The
+		# fallback cannot make that guarantee, so retain the flush there. Wait one
+		# second before probing to ensure the first answer cannot race ahead of
+		# dnsmasq handling the signal.
+		[ "$rc" -eq '0' ] && [ "$used_fallback" -eq '1' ] && {
 			killall -q -s HUP dnsmasq
-			# On large hosts/adblock configurations SIGHUP itself can take longer
-			# than the old one-second delay. A reply proves the final daemon has
-			# completed the cache flush and returned to its event loop.
-			if ! dnsmasq_ready; then
+			sleep '1'
+			! dnsmasq_ready && {
 				output "Dnsmasq is not answering after cache flush, $msg_abort $__FAIL__"
 				rc='1'
-			else
-				nslookup_tracker & exec 3>"$pipe_nslookup"
-				(
-					output "Resolving domain names in policies..."
-					while IFS='/' read -r _ domain _; do
-						[ -n "$domain" ] && run_nslookup "$domain" &
-					done < "$packageDnsmasqFile"
-					wait
-				)
-				exec 3>&-
-			fi
+			}
+		}
+
+		[ "$rc" -eq '0' ] && {
+			nslookup_tracker & exec 3>"$pipe_nslookup"
+			(
+				output "Resolving domain names in policies..."
+				while IFS='/' read -r _ domain _; do
+					[ -n "$domain" ] && run_nslookup "$domain" &
+				done < "$packageDnsmasqFile"
+				wait
+			)
+			exec 3>&-
 		}
 
 		rm -f "$pipe_nslookup"
