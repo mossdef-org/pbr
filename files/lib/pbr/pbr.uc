@@ -677,6 +677,11 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		// is_family_mismatch (which expected one address per call).
 		if (net.is_supported_interface(dest_dns_interface)) {
 			let dns_list = config.uci_ctx('network').get('network', dest_dns_interface, 'dns');
+			// 'option dns' is as common in the wild as 'list dns', and uci hands
+			// it back as one whitespace-separated string. Unsplit it matched
+			// neither is_ipv4 nor is_ipv6 and the servers were dropped.
+			if (type(dns_list) == 'string')
+				dns_list = filter(split(trim(dns_list), /\s+/), d => d != '');
 			if (type(dns_list) == 'array') {
 				for (let d in dns_list) {
 					if (V.is_ipv4(d) && !dest_dns_ipv4) dest_dns_ipv4 = d;
