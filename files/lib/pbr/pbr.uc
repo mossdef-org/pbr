@@ -325,12 +325,6 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		let nft_table = pkg.nft_table;
 		let nft_prefix = pkg.nft_prefix;
 	
-		if (!dest_dns_ipv4 && !dest_dns_ipv6) {
-			process_dns_policy_error = true;
-			push(state.errors, { code: 'errorPolicyProcessNoInterfaceDns', info: "'" + dest_dns + "'" });
-			return 1;
-		}
-	
 		// A rule built from exclusions alone has no positive source to take its
 		// family from, so fall back to the negated entries for the guards below
 		// and let the exclusions themselves decide which families to emit.
@@ -699,6 +693,20 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		}
 		if (!dest_dns) {
 			push(state.errors, { code: 'errorPolicyNoDns', info: name });
+			output.fail(); return 1;
+		}
+		// dest_dns named something, but it resolved to no server for either
+		// family -- typically an interface whose DNS could not be determined.
+		// This has to be caught HERE. The loop below skips the ipv4 and ipv6
+		// groups for the family they lack, so a policy with a plain-address
+		// source matches only those two, emits nothing, and falls through to
+		// output.ok() -- routing nothing while reporting success.
+		// dns_policy_routing() raises the same error, but only the three
+		// family-agnostic groups (phys_dev, mac_address, domain) ever reach it,
+		// so the fault was reported for a MAC source and silent for an address.
+		if (!dest_dns_ipv4 && !dest_dns_ipv6) {
+			// bare value: the message template quotes its argument already
+			push(state.errors, { code: 'errorPolicyProcessNoInterfaceDns', info: dest_dns });
 			output.fail(); return 1;
 		}
 	
