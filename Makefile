@@ -4,8 +4,8 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=pbr
-PKG_VERSION:=1.2.3
-PKG_RELEASE:=101
+PKG_VERSION:=1.2.4
+PKG_RELEASE:=0
 PKG_LICENSE:=AGPL-3.0-or-later
 PKG_MAINTAINER:=Stan Grishin <stangri@melmac.ca>, Erik Conijn <egc112@msn.com>
 
