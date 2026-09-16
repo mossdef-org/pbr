@@ -151,6 +151,7 @@ function create_nft(fs_mod, config, sh, output, pkg, platform, network, V, state
 	function nft6(line) {
 		if (!cfg.ipv6_enabled) return true;
 		nft_add(line);
+		return true;
 	}
 
 	function nft_call(...args) {
