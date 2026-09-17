@@ -42,6 +42,7 @@ config_foreach _remove_wg_server_client include
 # Remove deprecated options
 uci -q delete pbr.config.webui_supported_protocol
 uci -q delete pbr.config.webui_show_ignore_target
+uci -q delete pbr.config.rule_create_option
 [ -n "$(uci changes pbr)" ] && uci_commit pbr
 
 # ── Part 2: NFT resolver setup ───────────────────────────────────────
