@@ -2477,7 +2477,7 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		printf('===== %s chains - policies =====\n', pkg.name);
 		for (let ch in split(pkg.chains_list + ' dstnat', /\s+/)) {
 			_exec_print('nft -a list table inet ' + pkg.nft_table +
-				" | sed -n '/chain " + pkg.nft_prefix + '_' + ch + " {/,/\\t}/p'");
+				' | sed -n ' + sh.quote('/chain ' + pkg.nft_prefix + '_' + ch + ' {/,/\\t}/p'));
 		}
 
 		printf('===== %s chains - marking =====\n', pkg.name);
@@ -2485,7 +2485,7 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		for (let mc in split(mark_chains, /\s+/)) {
 			if (!mc) continue;
 			_exec_print('nft -a list table inet ' + pkg.nft_table +
-				" | sed -n '/chain " + mc + " {/,/\\t}/p'");
+				' | sed -n ' + sh.quote('/chain ' + mc + ' {/,/\\t}/p'));
 		}
 
 		printf('===== %s nft sets =====\n', pkg.name);
@@ -2493,7 +2493,7 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		for (let ns in split(sets, /\s+/)) {
 			if (!ns) continue;
 			_exec_print('nft -a list table inet ' + pkg.nft_table +
-				" | sed -n '/set " + ns + " {/,/\\t}/p'");
+				' | sed -n ' + sh.quote('/set ' + ns + ' {/,/\\t}/p'));
 		}
 
 		if (stat(pkg.dnsmasq_file)?.size > 0) {

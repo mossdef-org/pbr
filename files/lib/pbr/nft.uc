@@ -51,12 +51,16 @@ function create_nft(fs_mod, config, sh, output, pkg, platform, network, V, state
 		return '' + ((int(out) || 0) + 1);
 	}
 
+	// Both getters read declaration lines only, anchored at the start of the
+	// line. Unanchored, `chain <name>` / `set <name>` also matched inside a
+	// rule's `comment "..."`, whose text is the user's policy name, and the
+	// names returned here are passed to nft_call() and status_service().
 	function get_mark_nft_chains() {
 		let out = sh.exec('nft list table inet ' + pkg.nft_table + ' 2>/dev/null');
 		let prefix = pkg.nft_prefix + '_mark_';
 		let results = [];
 		for (let line in split(out, '\n')) {
-			let m = match(line, /chain\s+(\S+)/);
+			let m = match(line, /^\s*chain\s+(\S+)/);
 			if (m && index(m[1], prefix) == 0) push(results, m[1]);
 		}
 		return join(' ', results);
@@ -87,7 +91,7 @@ function create_nft(fs_mod, config, sh, output, pkg, platform, network, V, state
 		let prefix = pkg.nft_prefix + '_';
 		let results = [];
 		for (let line in split(out, '\n')) {
-			let m = match(line, /set\s+(\S+)/);
+			let m = match(line, /^\s*set\s+(\S+)/);
 			if (m && index(m[1], prefix) == 0) push(results, m[1]);
 		}
 		return join(' ', results);
@@ -153,8 +157,13 @@ function create_nft(fs_mod, config, sh, output, pkg, platform, network, V, state
 		nft_add(line);
 	}
 
+	// run() goes through a shell, and some arguments are names read back from
+	// `nft list` output rather than built by pbr. So any argument that is not
+	// a plain word is quoted -- the rule Python's shlex.quote() uses, which
+	// leaves the commands pbr builds itself exactly as they were.
 	function nft_call(...args) {
-		return sh.run('nft ' + join(' ', args)) == 0;
+		let words = map(args, (a) => match('' + a, /^[A-Za-z0-9_@%+=:,.\/-]+$/) ? '' + a : sh.quote(a));
+		return sh.run('nft ' + join(' ', words)) == 0;
 	}
 
 	function nft_check_element(element_type, name) {
