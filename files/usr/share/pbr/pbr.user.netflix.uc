@@ -8,7 +8,8 @@ return function(api) {
 
 	let iface = 'wan';
 	let asn = '2906';
-	let db_source = 'ipinfo.io';
+	let db_source = 'stat.ripe.net';
+	// let db_source = 'ipinfo.io';
 	// let db_source = 'api.hackertarget.com';
 	// let db_source = 'api.bgpview.io';
 	let re_ipv4 = '[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\/[0-9]+';
@@ -32,6 +33,12 @@ return function(api) {
 			let key = (family == 4) ? 'ipv4_prefixes' : 'ipv6_prefixes';
 			for (let entry in data?.data?.[key])
 				if (entry.prefix) push(prefixes, entry.prefix);
+		} else if (db_source == 'stat.ripe.net') {
+			let data = json(raw);
+			if (!data) return prefixes;
+			for (let entry in data?.data?.prefixes)
+				if (entry.prefix && (index(entry.prefix, ':') >= 0) == (family == 6))
+					push(prefixes, entry.prefix);
 		}
 		return prefixes;
 	};
@@ -47,6 +54,8 @@ return function(api) {
 		url4 = 'https://api.hackertarget.com/aslookup/?q=AS' + asn;
 	else if (db_source == 'api.bgpview.io')
 		url4 = 'https://api.bgpview.io/asn/' + asn + '/prefixes';
+	else if (db_source == 'stat.ripe.net')
+		url4 = 'https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS' + asn;
 
 	let raw4 = api.download(url4);
 	if (raw4) {
@@ -61,6 +70,8 @@ return function(api) {
 		url6 = 'https://ipinfo.io/AS' + asn;
 	else if (db_source == 'api.bgpview.io')
 		url6 = 'https://api.bgpview.io/asn/' + asn + '/prefixes';
+	else if (db_source == 'stat.ripe.net')
+		url6 = url4;
 
 	if (url6) {
 		let raw6 = (url6 == url4 && raw4) ? raw4 : api.download(url6);
