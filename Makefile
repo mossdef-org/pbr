@@ -72,6 +72,7 @@ define Package/pbr/install
 	$(INSTALL_DATA) ./files/usr/share/pbr/pbr.user.dnsprefetch $(1)/usr/share/pbr/pbr.user.dnsprefetch
 	$(INSTALL_DATA) ./files/usr/share/pbr/pbr.user.aws.uc $(1)/usr/share/pbr/pbr.user.aws.uc
 	$(INSTALL_DATA) ./files/usr/share/pbr/pbr.user.netflix.uc $(1)/usr/share/pbr/pbr.user.netflix.uc
+	$(INSTALL_DATA) ./files/usr/share/pbr/pbr.user.tunnel-dns.uc $(1)/usr/share/pbr/pbr.user.tunnel-dns.uc
 	$(INSTALL_DIR) $(1)/etc/uci-defaults
 	$(INSTALL_BIN) ./files/etc/uci-defaults/90-pbr $(1)/etc/uci-defaults/90-pbr
 endef
