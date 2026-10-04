@@ -1,0 +1,188 @@
+Testing a policy whose 'chain' names more than one chain.
+
+'chain' takes a space-separated list (or a UCI list), so one policy can route
+both forwarded traffic (prerouting) and the router's own (output). Each chain
+gets the same rules, and a domain policy still builds ONE set and ONE dnsmasq
+nftset entry per domain, both chains matching that set -- which is the point:
+two policies with the same domain list need two sets that dnsmasq fills on
+every answer, and two lists that have to be kept in step by hand.
+
+A chain pbr does not create would emit a rule nft cannot place, rejecting the
+whole ruleset; such a policy is now rejected on its own. A Tor policy is the
+exception: its rules always land in dstnat, so 'chain' only ever earned it a
+warning, and it still does -- with the rules emitted once, not once per chain.
+
+-- File uci/pbr.json --
+{
+	"pbr": [
+		{
+			".name": "config",
+			"enabled": "1",
+			"fw_mask": "00ff0000",
+			"ipv6_enabled": "0",
+			"resolver_set": "dnsmasq.nftset",
+			"uplink_interface": "wan",
+			"uplink_interface6": "wan6",
+			"uplink_ip_rules_priority": "30000",
+			"uplink_mark": "00010000",
+			"verbosity": "2",
+			"lan_device": ["br-lan"],
+			"resolver_instance": ["*"]
+		}
+	],
+	"policy": [
+		{
+			".name": "pol_both",
+			"name": "Both",
+			"enabled": "1",
+			"interface": "wan",
+			"dest_addr": "both.example.com 192.0.2.20",
+			"chain": "prerouting output"
+		},
+		{
+			".name": "pol_listed",
+			"name": "Listed",
+			"enabled": "1",
+			"interface": "wan",
+			"dest_addr": "192.0.2.21",
+			"chain": ["prerouting", "output"]
+		},
+		{
+			".name": "pol_dupe",
+			"name": "Dupe",
+			"enabled": "1",
+			"interface": "wan",
+			"dest_addr": "192.0.2.22",
+			"chain": "OUTPUT output"
+		},
+		{
+			".name": "pol_default",
+			"name": "Default",
+			"enabled": "1",
+			"interface": "wan",
+			"dest_addr": "192.0.2.23"
+		},
+		{
+			".name": "pol_bogus",
+			"name": "Bogus",
+			"enabled": "1",
+			"interface": "wan",
+			"dest_addr": "192.0.2.24",
+			"chain": "prerouting input"
+		},
+		{
+			".name": "pol_tor_multi",
+			"name": "Tor Multi",
+			"enabled": "1",
+			"interface": "tor",
+			"src_addr": "192.168.1.60",
+			"chain": "prerouting output"
+		},
+		{
+			".name": "pol_tor_bogus",
+			"name": "Tor Bogus",
+			"enabled": "1",
+			"interface": "tor",
+			"src_addr": "192.168.1.61",
+			"chain": "input"
+		}
+	]
+}
+-- End --
+
+-- File fs/open~_etc_tor_torrc.txt --
+VirtualAddrNetwork 10.192.0.0/10
+AutomapHostsOnResolve 1
+TransPort 0.0.0.0:9040
+DNSPort 0.0.0.0:9053
+-- End --
+
+-- File fs/stat~_etc_tor_torrc.json --
+{ "type": "file", "size": 100 }
+-- End --
+
+-- File ubus/service~list~name-tor.json --
+{ "tor": { "instances": { "instance1": { "running": true } } } }
+-- End --
+
+-- Testcase --
+import create_pbr from 'pbr';
+let pbr = create_pbr();
+
+let result = pbr.start_service(['on_start']);
+let nft = global.mocklib.read_captured('/var/run/pbr.nft') || '';
+let dnsmasq = global.mocklib.read_captured('/var/run/pbr.dnsmasq') || '';
+let lines = split(nft, '\n');
+
+function rules(chain, n) {
+	return filter(lines, l => index(l, ' pbr_' + chain + ' ') >= 0 &&
+		index(l, 'comment "' + n + '"') >= 0);
+}
+function count(hay, needle) {
+	let c = 0, pos = 0, i;
+	while ((i = index(substr(hay, pos), needle)) >= 0) { c++; pos += i + length(needle); }
+	return c;
+}
+function coded(list, code, info) {
+	return length(filter(list || [], m => m.code == code && '' + m.info == info)) > 0;
+}
+let set = 'pbr_wan_4_dst_ip_pol_both';
+let tor_rules = n => filter(lines, l => index(l, 'pbr_dstnat') >= 0 && index(l, n) >= 0);
+
+let checks = [
+	// 1. one policy, two chains: the same rules in each
+	['both_prerouting',     length(rules('prerouting', 'Both')) == 2],
+	['both_output',         length(rules('output', 'Both')) == 2],
+	['both_no_forward',     length(rules('forward', 'Both')) == 0],
+	// ... over a single set, which both chains match. Its 'add set' may repeat,
+	// as it already does once per protocol; nft takes identical ones as one.
+	['both_one_set',        length(uniq(filter(lines, l => index(l, 'add set inet fw4 ' + set + ' ') == 0))) == 1],
+	['both_set_prerouting', length(filter(rules('prerouting', 'Both'), l => index(l, '@' + set) >= 0)) == 1],
+	['both_set_output',     length(filter(rules('output', 'Both'), l => index(l, '@' + set) >= 0)) == 1],
+	// ... filled by one dnsmasq entry naming that set once
+	['both_one_dnsmasq_line', count(dnsmasq, 'nftset=/both.example.com/') == 1],
+	['both_set_named_once', count(dnsmasq, set) == 1],
+
+	// 2. a UCI list is read the same as a space-separated option
+	['listed_prerouting',   length(rules('prerouting', 'Listed')) == 1],
+	['listed_output',       length(rules('output', 'Listed')) == 1],
+
+	// 3. names are case-insensitive, and a repeated chain gets one rule
+	['dupe_output_once',    length(rules('output', 'Dupe')) == 1],
+	['dupe_no_prerouting',  length(rules('prerouting', 'Dupe')) == 0],
+
+	// 4. no chain is still prerouting only
+	['default_prerouting',  length(rules('prerouting', 'Default')) == 1],
+	['default_no_output',   length(rules('output', 'Default')) == 0],
+
+	// 5. an unknown chain rejects that policy, and only that policy
+	['bogus_rejected',      coded(result.errors, 'errorPolicyUnknownChain', "'Bogus' (input)")],
+	['bogus_no_rules',      length(filter(lines, l => index(l, 'comment "Bogus"') >= 0)) == 0],
+	['no_input_chain_rule', index(nft, ' pbr_input ') < 0],
+	['others_survive',      length(rules('prerouting', 'Both')) > 0 && length(rules('output', 'Default')) == 0 &&
+	                        length(rules('prerouting', 'Default')) > 0],
+
+	// 6. Tor: warned about, never rejected, rules emitted once
+	['tor_multi_warns',     coded(result.warnings, 'warningTorUnsetChainNft', 'Tor Multi')],
+	['tor_multi_dns_once',  length(filter(tor_rules('192.168.1.60'), l => index(l, 'Tor-DNS-UDP') >= 0)) == 1],
+	['tor_multi_https_once', length(filter(tor_rules('192.168.1.60'), l => index(l, 'Tor-HTTPS-TCP') >= 0)) == 1],
+	['tor_bogus_warns',     coded(result.warnings, 'warningTorUnsetChainNft', 'Tor Bogus')],
+	['tor_bogus_not_rejected', !coded(result.errors, 'errorPolicyUnknownChain', "'Tor Bogus' (input)")],
+	['tor_bogus_routed',    length(tor_rules('192.168.1.61')) > 0],
+];
+
+let pass = 0, fail = 0;
+for (let c in checks) {
+	if (c[1]) {
+		pass++;
+	} else {
+		fail++;
+		printf("FAIL: %s\n", c[0]);
+	}
+}
+printf("policy_multi_chain: %d/%d passed\n", pass, pass + fail);
+-- End --
+
+-- Expect stdout --
+policy_multi_chain: 24/24 passed
+-- End --

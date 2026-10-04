@@ -31,7 +31,7 @@ else
 fi
 
 readonly packageName='pbr'
-readonly initCompat='37'
+readonly initCompat='38'
 readonly _ucode="ucode -S -L /lib/${packageName} -L /lib/mwan4 /lib/${packageName}/cli.uc --"
 
 # shellcheck disable=SC1091
@@ -262,7 +262,7 @@ load_validate_policy() {
 		'enabled:bool:1' \
 		'interface:or("ignore", "tor", regex("xray_.*"), uci("network", "@interface")):wan' \
 		'proto:or(string)' \
-		'chain:or("", "forward", "output", "prerouting"):prerouting' \
+		'chain:list(or("forward", "output", "prerouting")):prerouting' \
 		'src_addr:list(neg(or(host,network,macaddr,string)))' \
 		'src_port:list(neg(or(portrange,string)))' \
 		'dest_addr:list(neg(or(host,network,string)))' \
