@@ -284,10 +284,14 @@ else
 			nslookup_tracker & exec 3>"$pipe_nslookup"
 			(
 				output "Resolving domain names in policies..."
-				while IFS='/' read -r _ domain _; do
-					[ -n "$domain" ] && run_nslookup "$domain" &
-				done < "$packageDnsmasqFile"
-				wait
+				# One lookup at a time: dnsmasq adds each answer to its nft set
+				# synchronously, and with large interval sets elsewhere in the
+				# ruleset every add can take a noticeable fraction of a second
+				# (netfilter bugzilla #1735). A parallel burst queues those adds
+				# and stalls dnsmasq for all clients until it drains.
+				cut -s -d'/' -f2 "$packageDnsmasqFile" | sort -u | while read -r domain; do
+					[ -n "$domain" ] && run_nslookup "$domain"
+				done
 			)
 			exec 3>&-
 		}
