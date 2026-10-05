@@ -780,6 +780,17 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 				}
 			}
 		}
+		// 'chain' may name several chains, so a single policy can route both
+		// forwarded traffic (prerouting) and the router's own (output) instead
+		// of two policies whose lists have to be kept in step by hand. Each
+		// chain gets the same rules, matching the same sets, so a domain
+		// policy still has one set and one dnsmasq nftset entry per domain.
+		let chains = [], bad_chains = [];
+		for (let c in split(lc(chain || ''), /\s+/)) {
+			if (!c || index(chains, c) >= 0 || index(bad_chains, c) >= 0) continue;
+			push(index(split(pkg.chains_list, ' '), c) >= 0 ? chains : bad_chains, c);
+		}
+		if (!length(chains)) push(chains, 'prerouting');
 		if (net.is_tor(interface_name)) {
 			// Tor is a dstnat redirect, not a routed interface: the rules below
 			// hardcode ports 53/80/443 and force the dstnat chain, so these
@@ -812,8 +823,17 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 				push(state.warnings, { code: 'warningTorUnsetDestPort', info: name });
 			if (proto)
 				push(state.warnings, { code: 'warningTorUnsetProto', info: name });
-			if (chain && lc(chain) != 'prerouting')
+			if (length(bad_chains) || length(chains) > 1 || chains[0] != 'prerouting')
 				push(state.warnings, { code: 'warningTorUnsetChainNft', info: name });
+			// The rules land in dstnat whatever 'chain' says: emit them once.
+			chains = ['prerouting'];
+		} else if (length(bad_chains)) {
+			// A rule for a chain pbr does not create is one nft cannot place,
+			// and it would reject the whole ruleset with it. Drop just this
+			// policy instead.
+			push(state.errors, { code: 'errorPolicyUnknownChain',
+				info: "'" + name + "' (" + join(' ', bad_chains) + ")" });
+			output.fail(); return 1;
 		}
 		if (!net.is_supported_interface(interface_name) && !net.is_mwan4_strategy(interface_name)) {
 			push(state.errors, { code: 'errorPolicyUnknownInterface', info: name });
@@ -876,8 +896,9 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 			for (let dest_group in dest_groups) {
 				if (V.str_contains(src_group.fg, 'ipv4') && V.str_contains(dest_group.fg, 'ipv6')) continue;
 				if (V.str_contains(src_group.fg, 'ipv6') && V.str_contains(dest_group.fg, 'ipv4')) continue;
-				policy_routing(name, interface_name, src_group.fv, src_port, dest_group.fv, dest_port,
-					proto, chain, uid, src_neg, dest_neg);
+				for (let c in chains)
+					policy_routing(name, interface_name, src_group.fv, src_port, dest_group.fv, dest_port,
+						proto, c, uid, src_neg, dest_neg);
 			}
 		}
 	

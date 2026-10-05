@@ -9,7 +9,7 @@
 const pkg = {
 	name: 'pbr',
 	version: 'dev-test',
-	compat: '37',
+	compat: '38',
 	config_file: '/etc/config/pbr',
 	debug_file: '/var/run/pbr.debug',
 	lock_file: '/var/run/pbr.lock',
@@ -78,6 +78,7 @@ function get_text(code, cfg, ...args) {
 		errorPolicyProcessUnknownFwmark:       sprintf("Unknown packet mark for interface '%s'", a1),
 		errorPolicyProcessMismatchFamily:      sprintf("Mismatched IP family between in policy '%s'", a1),
 		errorPolicyProcessUnknownProtocol:     sprintf("Unknown protocol in policy '%s'", a1),
+		errorPolicyUnknownChain:               sprintf("Policy %s: unknown chain; use 'prerouting', 'forward' or 'output'", a1),
 		errorPolicyProtoPortNotSupported:      sprintf("Policy %s: this protocol cannot match a port; unset the port, or nft rejects the whole ruleset", a1),
 		errorPolicyProcessInsertionFailed:     sprintf("Insertion failed for both IPv4 and IPv6 for policy '%s'", a1),
 		errorPolicyProcessInsertionFailedIpv4: sprintf("Insertion failed for IPv4 for policy '%s'", a1),
