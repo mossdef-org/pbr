@@ -11,11 +11,16 @@ EOF
 chmod +x "$TEST_DIR/mock_ucode"
 
 mkdir -p "$TEST_DIR/var_run"
+# boot() removes the main nft file; keep it off the real one, so running the
+# suite on a router does not delete its live fw4 include.
+mkdir -p "$TEST_DIR/nftables.d/ruleset-post"
+touch "$TEST_DIR/nftables.d/ruleset-post/30-pbr.nft"
 echo "NO" > "$TEST_DIR/ucode_called"
 echo "NO" > "$TEST_DIR/trigger_added"
 
 cp files/etc/init.d/pbr "$TEST_DIR/pbr_mock.sh"
 sed -i "s|/var/run|$TEST_DIR/var_run|g" "$TEST_DIR/pbr_mock.sh"
+sed -i "s|/usr/share/nftables.d|$TEST_DIR/nftables.d|g" "$TEST_DIR/pbr_mock.sh"
 sed -i "s|readonly _ucode=.*|readonly _ucode=\"$TEST_DIR/mock_ucode\"|g" "$TEST_DIR/pbr_mock.sh"
 
 sed -i 's|^\. /lib/functions.sh|# . /lib/functions.sh|' "$TEST_DIR/pbr_mock.sh"
@@ -61,6 +66,10 @@ if [ "$UCODE_CALLED" = "YES" ]; then
 fi
 if [ "$TRIGGER_ADDED" = "NO" ]; then
     echo "FAIL: interface.*.up trigger was not added!" >&2
+    exit 1
+fi
+if [ -f "$TEST_DIR/nftables.d/ruleset-post/30-pbr.nft" ]; then
+    echo "FAIL: boot() did not remove the main nft file!" >&2
     exit 1
 fi
 if [ -f "$TEST_DIR/var_run/pbr.boot" ]; then
