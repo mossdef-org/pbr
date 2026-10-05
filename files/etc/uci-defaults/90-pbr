@@ -26,6 +26,12 @@ sed -i "s|procd_wan6_interface|uplink_interface6|g" /etc/config/pbr
 sed -i "s|wan_ip_rules_priority|uplink_ip_rules_priority|g" /etc/config/pbr
 sed -i "s|wan_mark|uplink_mark|g" /etc/config/pbr
 
+# The aws/netflix user files became ucode in 1.2.4 and were renamed; an
+# upgraded /etc/config/pbr still points at the old, now absent, paths.
+# Anchored on the closing quote so re-running cannot produce '.uc.uc'.
+sed -i "s|/usr/share/pbr/pbr\.user\.aws'|/usr/share/pbr/pbr.user.aws.uc'|g" /etc/config/pbr
+sed -i "s|/usr/share/pbr/pbr\.user\.netflix'|/usr/share/pbr/pbr.user.netflix.uc'|g" /etc/config/pbr
+
 # Remove deprecated wg_server_and_client include
 # shellcheck disable=SC2317,SC2329
 _remove_wg_server_client() {

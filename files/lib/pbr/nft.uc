@@ -1,5 +1,5 @@
 'use strict';
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2020-2026 MOSSDeF, Stan Grishin (stangri@melmac.ca).
 //
 // NFT rule building, nftset management, cleanup, resolver, address classification.
@@ -151,6 +151,7 @@ function create_nft(fs_mod, config, sh, output, pkg, platform, network, V, state
 	function nft6(line) {
 		if (!cfg.ipv6_enabled) return true;
 		nft_add(line);
+		return true;
 	}
 
 	function nft_call(...args) {

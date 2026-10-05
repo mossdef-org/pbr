@@ -1,5 +1,5 @@
 'use strict';
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2020-2026 MOSSDeF, Stan Grishin (stangri@melmac.ca).
 //
 // UCI config loading, schema definitions, and cursor management.

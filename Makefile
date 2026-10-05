@@ -21,13 +21,11 @@ define Package/pbr
   DEPENDS:= \
 	+ip-full \
 	+jshn \
-	+jsonfilter \
 	+resolveip \
 	+ucode \
 	+ucode-mod-fs \
 	+ucode-mod-uci \
 	+ucode-mod-ubus \
-	+!BUSYBOX_DEFAULT_AWK:gawk \
 	+!BUSYBOX_DEFAULT_GREP:grep \
 	+!BUSYBOX_DEFAULT_SED:sed \
 	+kmod-nft-core \
