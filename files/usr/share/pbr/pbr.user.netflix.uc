@@ -24,9 +24,14 @@ return function(api) {
 				if (m) push(prefixes, m[1]);
 			}
 		} else if (db_source == 'api.hackertarget.com') {
+			// One list for both families: keep only this call's. An IPv6 prefix
+			// in the IPv4 set makes nft reject the whole ruleset.
 			let lines = split(raw, '\n');
-			for (let i = 1; i < length(lines); i++)
-				if (trim(lines[i])) push(prefixes, trim(lines[i]));
+			for (let i = 1; i < length(lines); i++) {
+				let prefix = trim(lines[i]);
+				if (prefix && (index(prefix, ':') >= 0) == (family == 6))
+					push(prefixes, prefix);
+			}
 		} else if (db_source == 'api.bgpview.io') {
 			let data = json(raw);
 			if (!data) return prefixes;
@@ -70,7 +75,7 @@ return function(api) {
 		url6 = 'https://ipinfo.io/AS' + asn;
 	else if (db_source == 'api.bgpview.io')
 		url6 = 'https://api.bgpview.io/asn/' + asn + '/prefixes';
-	else if (db_source == 'stat.ripe.net')
+	else if (db_source == 'stat.ripe.net' || db_source == 'api.hackertarget.com')
 		url6 = url4;
 
 	if (url6) {
