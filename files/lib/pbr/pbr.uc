@@ -59,6 +59,7 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 	let _config_loaded = false;
 	let _loaded = false;
 	let _deferred_to_boot = false;
+	let _health_failed = false;
 
 	// ── Interface Registry Helpers ──────────────────────────────────────
 	
@@ -66,6 +67,7 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		state.errors = [];
 		state.warnings = [];
 		_deferred_to_boot = false;
+		_health_failed = false;
 		for (let k in keys(iface_registry))
 			delete iface_registry[k];
 	}
@@ -163,20 +165,22 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 			health_fail = true;
 		}
 		if (!nft.nft_check_element('table', 'fw4')) {
+			// Without the table its chains are missing too; one error says it.
 			push(state.errors, { code: 'errorDefaultFw4TableMissing', info: 'fw4' });
 			health_fail = true;
-		}
-		if (net.is_config_enabled('dns_policy') || net.is_tor_configured()) {
-			if (!nft.nft_check_element('chain', 'dstnat')) {
-				push(state.errors, { code: 'errorDefaultFw4ChainMissing', info: 'dstnat' });
-				health_fail = true;
+		} else {
+			if (net.is_config_enabled('dns_policy') || net.is_tor_configured()) {
+				if (!nft.nft_check_element('chain', 'dstnat')) {
+					push(state.errors, { code: 'errorDefaultFw4ChainMissing', info: 'dstnat' });
+					health_fail = true;
+				}
 			}
-		}
-		let chains = split(pkg.chains_list, ' ');
-		for (let c in chains) {
-			if (!nft.nft_check_element('chain', 'mangle_' + c)) {
-				push(state.errors, { code: 'errorDefaultFw4ChainMissing', info: 'mangle_' + c });
-				health_fail = true;
+			let chains = split(pkg.chains_list, ' ');
+			for (let c in chains) {
+				if (!nft.nft_check_element('chain', 'mangle_' + c)) {
+					push(state.errors, { code: 'errorDefaultFw4ChainMissing', info: 'mangle_' + c });
+					health_fail = true;
+				}
 			}
 		}
 		if (cfg.resolver_set == 'dnsmasq.nftset' && !env.resolver_set_supported) {
@@ -238,6 +242,7 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 			output.logger_debug(cfg.debug_performance, '[PERF-DEBUG] Detecting environment took ' + (end_time - start_time) + 's');
 			if (!_check_system_health()) {
 				output.failn();
+				_health_failed = true;
 				return false;
 			}
 			start_time = time();
@@ -2006,6 +2011,18 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 
 		reset();
 		if (!load(param)) {
+			// A failed environment check: hand its errors to procd, so that
+			// service_started(), status and the WebUI can say what is wrong
+			// (null left them in state.errors only), and keep the boot-mode
+			// retry the wrapper sets up for a null result.
+			if (_health_failed)
+				return {
+					packageCompat: +pkg.compat,
+					version: pkg.version,
+					retryOnBoot: true,
+					errors: state.errors,
+					warnings: state.warnings,
+				};
 			return null;
 		}
 		// Enumerate interfaces BEFORE is_wan_up — interface_enumerate /
@@ -2309,7 +2326,9 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 				output.verbose.write(pkg.service_name + ' is monitoring interfaces:\\n' + gw_summary + '\\n');
 		} else {
 			output.print(pkg.service_name + ' FAILED TO START!!!\\n');
-			output.print('Check the output of nft -c -f ' + pkg.nft_temp_file + '\\n');
+			// The errors below say why; the nft hint is for when none do.
+			if (!length(svc_data?.errors || []))
+				output.print('Check the output of nft -c -f ' + pkg.nft_temp_file + '\\n');
 		}
 	
 		let warnings = svc_data?.warnings || [];
@@ -2344,7 +2363,8 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		// procd triggers can be registered on every start, including the
 		// degraded path where ucode bailed because the uplink wasn't ready.
 		let preamble = '_pbr_ifaces_triggers=' + sh.quote(data.ifacesTriggers || '') + '\n' +
-		               '_pbr_deferred_to_boot=' + sh.quote(data.deferredToBoot ? '1' : '') + '\n';
+		               '_pbr_deferred_to_boot=' + sh.quote(data.deferredToBoot ? '1' : '') + '\n' +
+		               '_pbr_retry_on_boot=' + sh.quote(data.retryOnBoot ? '1' : '') + '\n';
 
 		// Degraded start: skip the per-instance data block entirely
 		// (empty _pbr_svc_data — wrapper will unset its service_data hook,
