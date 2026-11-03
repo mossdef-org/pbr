@@ -1,0 +1,63 @@
+Testing when service_started prints the "Check the output of nft -c -f" hint.
+
+When the start failed, the hint is printed if no error says why, or if nft
+rejected the generated file (errorNftMainFileInstall,
+errorNftNetifdFileInstall): nft_call() drops nft's own message, and that
+command shows it. It is left out when only the environment check failed
+(e.g. a missing fw4 table), where the error itself says what is wrong.
+
+-- Testcase --
+import create_pbr from 'pbr';
+
+let logged = [];
+let _prev_system = global.system;
+global.system = function(argv, timeout) {
+	push(logged, type(argv) == 'array' ? join(' ', argv) : '' + argv);
+	return _prev_system(argv, timeout);
+};
+
+let orig_read_json = global.mocklib.read_json_file;
+
+function run_with_errors(errors) {
+	global.mocklib.read_json_file = function(path) {
+		if (path == 'ubus/service~list~name-pbr.json')
+			return { pbr: { data: { errors } } };
+		return orig_read_json(path);
+	};
+	logged = [];
+	create_pbr().service_started('on_start', '');
+	global.mocklib.read_json_file = orig_read_json;
+	return {
+		failed: length(filter(logged, c => index(c, 'FAILED TO START') >= 0)) > 0,
+		hint:   length(filter(logged, c => index(c, 'Check the output of nft -c -f') >= 0)) > 0,
+	};
+}
+
+let none   = run_with_errors([]);
+let env    = run_with_errors([ { code: 'errorDefaultFw4TableMissing', info: 'fw4' } ]);
+let main   = run_with_errors([ { code: 'errorNftMainFileInstall', info: '/var/run/pbr.nft' } ]);
+let netifd = run_with_errors([ { code: 'errorNftNetifdFileInstall', info: '/var/run/pbr.nft' } ]);
+
+let checks = [
+	['failed_reported',        none.failed && env.failed && main.failed && netifd.failed],
+	['hint_without_errors',    none.hint],
+	['no_hint_env_error',      !env.hint],
+	['hint_nft_main_rejected', main.hint],
+	['hint_nft_netifd_rejected', netifd.hint],
+];
+
+let pass = 0, fail = 0;
+for (let c in checks) {
+	if (c[1]) {
+		pass++;
+	} else {
+		fail++;
+		printf("FAIL: %s\n", c[0]);
+	}
+}
+printf("nft_hint_on_start_failure: %d/%d passed\n", pass, pass + fail);
+-- End --
+
+-- Expect stdout --
+nft_hint_on_start_failure: 5/5 passed
+-- End --
