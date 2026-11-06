@@ -60,8 +60,10 @@ return function(api) {
 	let pinned = {};
 	uci.foreach('dhcp', 'dnsmasq', function(s) {
 		for (let v in ((type(s.server) == 'array') ? s.server : [ s.server ])) {
-			let m = match(v || '', /^\/([^\/]+)\//);
-			if (m) pinned[m[1]] = true;
+			// /a.example/b.example/<server> names several domains
+			let m = match(v || '', /^\/(.*)\//);
+			for (let d in (m ? split(m[1], '/') : []))
+				if (d) pinned[d] = true;
 		}
 	});
 
@@ -71,6 +73,8 @@ return function(api) {
 	let used = {};
 	uci.foreach('pbr', 'policy', function(s) {
 		if (s.enabled == '0') return;
+		// The name ends up in a comment; a newline in it would start a new dnsmasq line.
+		let name = replace(s.name || '', /[[:cntrl:]]+/g, ' ');
 		let dest = (type(s.dest_addr) == 'array') ? join(' ', s.dest_addr) : (s.dest_addr || '');
 		for (let d in split(trim(dest), /\s+/)) {
 			if (!_is_domain(d) || seen[d]) continue;
@@ -78,7 +82,7 @@ return function(api) {
 			let t = targets[s.interface];
 			if (!t) continue;
 			push(lines, 'server=/' + d + '/' + t.addr + ((t.port != 53) ? '#' + t.port : '') +
-				'@' + t.dev + ' # ' + s.name);
+				'@' + t.dev + ' # ' + name);
 			used[s.interface] = t;
 			if (pinned[d])
 				_warn(d + ' also has a dhcp server entry; remove it, or answers will mix');

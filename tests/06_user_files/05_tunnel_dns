@@ -1,4 +1,4 @@
-Testing pbr.user.tunnel-dns.uc: map entries that are not an address[#port] and interfaces without a device are skipped with a warning, and the dnsmasq server= lines and the pbr_output exemption use the interface's device, not its UCI name.
+Testing pbr.user.tunnel-dns.uc: map entries that are not an address[#port] and interfaces without a device are skipped with a warning, and the dnsmasq server= lines and the pbr_output exemption use the interface's device, not its UCI name. A policy name cannot add lines of its own, and every domain of a multi-domain dhcp server= entry is checked.
 
 -- Testcase --
 // The shipped file is read with the real fs; the module cache is then dropped so that
@@ -46,7 +46,12 @@ push(checks, ['bad_address_skipped', has_warning("lan: '10.0.0.300' is not an ad
 push(checks, ['bad_port_skipped', has_warning("wan6: '10.0.0.1#70000' is not an address[#port]; skipped")]);
 push(checks, ['no_device_skipped', index(dnsmasq, 'example.info') < 0 && has_warning('wg0: no device (interface down or unknown); skipped')]);
 push(checks, ['valid_entries_not_warned', length(filter(warnings, (w) => match(w, /^tunnel-dns: vpn(server)?:/))) == 0]);
+// example.org is the second domain of a multi-domain dhcp entry.
 push(checks, ['dhcp_server_entry_warned', has_line('server=/example.org/10.8.0.1#5353@tun0 # VPN dom') && has_warning('example.org also has a dhcp server entry; remove it, or answers will mix')]);
+
+// A control character in a policy name must not start a line of its own.
+push(checks, ['name_newline_stays_in_comment', has_line('server=/example.biz/10.8.0.1#5353@tun0 # Inject server=/injected.test/9.9.9.9')]);
+push(checks, ['no_injected_line', length(filter(lines, (l) => index(l, 'server=/') != 0)) == 0 && index(dnsmasq, '\nserver=/injected.test/') < 0]);
 
 // The pbr_output exemption matches the device too, per family.
 push(checks, ['nft4_uses_device', index(rule4, 'oifname . ip daddr . th dport { "tun0" . 10.8.0.1 . 5353 }') >= 0]);
@@ -80,7 +85,8 @@ printf("tunnel_dns: %d/%d passed\n", pass, pass + fail);
 		{ ".name": "p3", "name": "V6 dom", "interface": "vpnserver", "dest_addr": "example.edu" },
 		{ ".name": "p4", "name": "WAN dom", "interface": "wan", "dest_addr": "example.net" },
 		{ ".name": "p5", "name": "WG dom", "interface": "wg0", "dest_addr": "example.info" },
-		{ ".name": "p6", "name": "Off", "interface": "vpn", "enabled": "0", "dest_addr": "disabled.example" }
+		{ ".name": "p6", "name": "Off", "interface": "vpn", "enabled": "0", "dest_addr": "disabled.example" },
+		{ ".name": "p7", "name": "Inject\nserver=/injected.test/9.9.9.9", "interface": "vpn", "dest_addr": "example.biz" }
 	]
 }
 -- End --
@@ -88,7 +94,7 @@ printf("tunnel_dns: %d/%d passed\n", pass, pass + fail);
 -- File uci/dhcp.json --
 {
 	"dnsmasq": [
-		{ ".name": "cfg01411c", "server": [ "/example.org/192.0.2.53" ] }
+		{ ".name": "cfg01411c", "server": [ "/unrelated.example/example.org/192.0.2.53" ] }
 	]
 }
 -- End --
@@ -98,5 +104,5 @@ printf("tunnel_dns: %d/%d passed\n", pass, pass + fail);
 -- End --
 
 -- Expect stdout --
-tunnel_dns: 16/16 passed
+tunnel_dns: 18/18 passed
 -- End --
