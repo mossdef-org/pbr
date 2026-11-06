@@ -328,5 +328,27 @@ for shellscript in \
 	fi
 done
 
+# ── ucode syntax compatibility ────────────────────────────
+#
+# check-ucode-syntax.sh only means something on the oldest ucode pbr supports, and
+# refuses a newer one, while this suite runs on any ucode. So it takes its own
+# interpreter, and is skipped when none is given.
+
+printf "\n##\n## Checking syntax against the oldest supported ucode\n##\n\n"
+name="check-ucode-syntax.sh"
+printf "%s %s " "$name" "${line:${#name}}"
+if [ -z "$PBR_UCODE_OLDEST" ]; then
+	printf "SKIP (PBR_UCODE_OLDEST not set)\n"
+else
+	n_tests=$((n_tests + 1))
+	if tests/check-ucode-syntax.sh "$PBR_UCODE_OLDEST" >/dev/null 2>&1; then
+		printf "OK\n"
+	else
+		printf "FAILED\n"
+		tests/check-ucode-syntax.sh "$PBR_UCODE_OLDEST" # run again to show output
+		n_fails=$((n_fails + 1))
+	fi
+fi
+
 printf "\nRan %d tests, %d okay, %d failures\n" $n_tests $((n_tests - n_fails)) $n_fails
 exit $n_fails
