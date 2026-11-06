@@ -254,6 +254,10 @@ return {
 		foreach: function(config, stype, cb) {
 			let rv = false;
 
+			/* Like libuci: load the package on first use */
+			if (!exists(this._configs, config))
+				this.load(config);
+
 			if (exists(this._configs, config)) {
 				let cfg = this._configs[config],
 				    sids = sort(keys(cfg), (a, b) => cfg[a]['.index'] - cfg[b]['.index']);
