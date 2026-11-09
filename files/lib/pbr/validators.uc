@@ -10,9 +10,12 @@ function str_contains(haystack, needle) { return haystack != null && needle != n
 function str_contains_word(haystack, needle) { return !!(haystack && needle) && index(split(trim('' + haystack), /\s+/), '' + needle) >= 0; }
 function str_first_word(s) { let m = s ? match(trim('' + s), /^(\S+)/) : null; return m ? m[1] : ''; }
 
+// No leading zeros, in an octet or in the prefix: nft reads them as octal, so
+// '192.168.0.09' and '/08' are not valid to it, and one such value in the
+// generated file fails the single `nft -c -f` and with it every policy.
 function is_ipv4(s) {
 	if (!s) return false;
-	return !!match('' + s, /^((25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})(\/([0-2]?[0-9]|3[0-2]))?$/);
+	return !!match('' + s, /^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(\/([12]?[0-9]|3[0-2]))?$/);
 }
 
 function is_mac_address(s) {
@@ -30,7 +33,9 @@ function is_ipv6(s) {
 function is_domain(s) {
 	if (!s) return false;
 	s = '' + s;
-	if (is_ipv4(s)) return false;
+	// Four numbers are a mistyped address, not a name: without this they would
+	// pass as a domain and turn into a set dnsmasq can never fill.
+	if (match(s, /^[0-9]+(\.[0-9]+){3}$/)) return false;
 	if (match(s, /^([0-9A-Fa-f]{2}-){5}([0-9A-Fa-f]{2})$/)) return false;
 	return !!match(s, /^[a-zA-Z0-9]$/) || !!match(s, /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,61}[a-zA-Z0-9]$/) ||
 		!!match(s, /^([a-zA-Z0-9]([a-zA-Z0-9_-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$/);

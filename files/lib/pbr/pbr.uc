@@ -715,10 +715,12 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		let neg_list = 'phys_dev_negative mac_address_negative domain_negative ipv4_negative ipv6_negative';
 		let src_neg = collect_negations(neg_list, src_addr, 'src', null, null, name, false);
 		let has_positive = false;
+		let processed = src_neg.matched;
 		for (let fg in split(filter_list, /\s+/)) {
 			let filtered = V.filter_options(fg, src_addr);
 			if (!filtered) continue;
 			has_positive = true;
+			processed += (processed ? ' ' : '') + filtered;
 			if (V.str_contains(fg, 'ipv4') && !dest_dns_ipv4) continue;
 			if (V.str_contains(fg, 'ipv6') && !dest_dns_ipv6) continue;
 			dns_policy_routing(name, filtered, dest_dns, uid, dest_dns_port, dest_dns_ipv4, dest_dns_ipv6, src_neg);
@@ -728,6 +730,13 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		if (!has_positive && (src_neg.n4 || src_neg.n6))
 			dns_policy_routing(name, '', dest_dns, uid, dest_dns_port, dest_dns_ipv4, dest_dns_ipv6, src_neg);
 	
+		for (let i in split(src_addr, /\s+/)) {
+			if (i && !V.str_contains(processed, i)) {
+				process_dns_policy_error = true;
+				push(state.errors, { code: 'errorPolicyProcessUnknownEntry', info: name + ': ' + i });
+			}
+		}
+
 		if (process_dns_policy_error) output.fail();
 		else output.ok();
 	}
@@ -899,9 +908,15 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		if (!length(src_groups)) push(src_groups, { fg: 'none', fv: '' });
 		if (!length(dest_groups)) push(dest_groups, { fg: 'none', fv: '' });
 	
+		// A side that was configured but kept no usable entry must not fall
+		// through to the rule above: with no address on that side it would match
+		// every address, so one typo would send all traffic down this interface.
+		// The loops further down report the entries.
+		let unusable = (src_addr && !processed_src) || (dest_addr && !processed_dest);
+
 		// ucode's for-in yields an array's values, not its indices, so each of
 		// these is the { fg, fv } pushed above.
-		for (let src_group in src_groups) {
+		if (!unusable) for (let src_group in src_groups) {
 			for (let dest_group in dest_groups) {
 				if (V.str_contains(src_group.fg, 'ipv4') && V.str_contains(dest_group.fg, 'ipv6')) continue;
 				if (V.str_contains(src_group.fg, 'ipv6') && V.str_contains(dest_group.fg, 'ipv4')) continue;
