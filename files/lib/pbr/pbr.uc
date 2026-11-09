@@ -1594,6 +1594,8 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 			unlink(nft_capture);
 			writefile(wrapper_path,
 				'nft() { printf "%s\\n" "$*" >> ' + sh.quote(nft_capture) + '; }\n' +
+				'nft4() { nft "$@"; }\n' +
+				'nft6() { ' + (cfg.ipv6_enabled ? 'nft "$@"' : 'return 0') + '; }\n' +
 				'. ' + sh.quote(path) + '\n');
 			let rc = sh.run('. ' + sh.quote(wrapper_path));
 			let captured = readfile(nft_capture) || '';
