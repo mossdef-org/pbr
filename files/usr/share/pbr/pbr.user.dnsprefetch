@@ -30,6 +30,11 @@
 # Run this file from cron to rebuild the sets periodically. Once a night, at an
 # hour nobody is using the network, is the sensible default:
 #
+#   0 4 * * * /etc/init.d/pbr dnsprefetch
+#
+# The service command runs this file in standalone mode (see below). Calling
+# the file directly does the same:
+#
 #   0 4 * * * PBR_DNSPREFETCH_MODE=standalone /bin/sh /usr/share/pbr/pbr.user.dnsprefetch
 #
 # Use a shorter interval only if your domains rotate faster than that, and see
@@ -37,25 +42,29 @@
 # day -- `0 */6 * * *` would run at 06:00, 12:00 and 18:00 as well as at
 # midnight.
 #
-# PBR_DNSPREFETCH_MODE=standalone is required, and is what makes the file
-# runnable on its own: without it the script waits for a pbr run that is not
-# happening -- it watches pbr's ruleset file for a rewrite, gives up after
-# about three minutes and resolves nothing. It also flushes dnsmasq's cache,
-# which a run outside pbr has to do itself: dnsmasq only writes to an nft set
-# when it takes an answer from upstream, so lookups served from its cache would
-# add nothing at all. A standalone run takes a second or two.
+# PBR_DNSPREFETCH_MODE=standalone, which the service command sets for you, is
+# required, and is what makes the file runnable on its own: without it the
+# script waits for a pbr run that is not happening -- it watches pbr's ruleset
+# file for a rewrite, gives up after about three minutes and resolves nothing.
+# It also flushes dnsmasq's cache, which a run outside pbr has to do itself:
+# dnsmasq only writes to an nft set when it takes an answer from upstream, so
+# lookups served from its cache would add nothing at all. A standalone run
+# takes a second or two.
 #
 # The variable says how the script is being RUN, not what it does to the sets;
-# rebuilding them is the separate option below.
+# rebuilding them is the separate dnsprefetch_flush_sets option below.
 #
 # On its own a standalone run only TOPS UP the sets. An address dnsmasq added
 # is never removed by another lookup, so a domain that has changed address
 # leaves the old one behind and the set only grows: harmless until that address
 # is reused by somebody else, at which point traffic to it still takes this
 # policy's route. To have each run rebuild the sets from the answers that are
-# current now, set _dnsprefetch_flush_sets='1' where it is defined further down
-# in this file. That empties the domain sets immediately before resolving them
-# again. It touches ONLY the sets dnsmasq populates -- the names are read from
+# current now, turn on pbr's dnsprefetch_flush_sets option:
+#
+#   uci set pbr.config.dnsprefetch_flush_sets='1'; uci commit pbr
+#
+# That empties the domain sets immediately before resolving them again. It
+# touches ONLY the sets dnsmasq populates -- the names are read from
 # pbr's own dnsmasq file -- never the pbr_*_user sets, which hold whatever your
 # other custom user files put there and which nothing here would put back. It
 # takes effect in standalone mode only: a start or a reload deliberately keeps
@@ -114,8 +123,10 @@ _dnsprefetch_self='/usr/share/pbr/pbr.user.dnsprefetch'
 # Optional: empty pbr's domain sets before re-resolving, so the run rebuilds
 # them from the answers that are current now instead of adding to whatever is
 # already there. Off by default: a prefetch is additive and cannot remove an
-# address, which is why a domain set otherwise only grows. Set to '1' to
-# enable.
+# address, which is why a domain set otherwise only grows. Turned on by
+# option dnsprefetch_flush_sets '1' in the config section of /etc/config/pbr,
+# which an upgrade of the package leaves alone, unlike this file. The name
+# is spelled out because $packageName is not set in this pass (see above).
 #
 # It takes effect in standalone mode ONLY (see PBR_DNSPREFETCH_MODE below). A
 # start or a reload deliberately keeps each set's addresses unless that
@@ -124,10 +135,14 @@ _dnsprefetch_self='/usr/share/pbr/pbr.user.dnsprefetch'
 # undo that. A timed run is the opposite case: it exists to rebuild the sets
 # and it re-resolves every name immediately.
 
-_dnsprefetch_flush_sets='0'
+case "$(uci -q get pbr.config.dnsprefetch_flush_sets)" in
+	1|on|true|yes|enabled) _dnsprefetch_flush_sets='1' ;;
+	*) _dnsprefetch_flush_sets='0' ;;
+esac
 
 # Standalone mode, for a cron job -- see REFRESHING ON A TIMER above. This says
-# how the script is being run; it does not by itself rebuild anything:
+# how the script is being run; it does not by itself rebuild anything. The
+# 'dnsprefetch' command of /etc/init.d/pbr sets it, or by hand:
 #   0 4 * * * PBR_DNSPREFETCH_MODE=standalone /bin/sh /usr/share/pbr/pbr.user.dnsprefetch
 # There is no pbr run to wait for and nothing is waiting on us, so act as the
 # detached child straight away and skip the barrier below. Without this the
