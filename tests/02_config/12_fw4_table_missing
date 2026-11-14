@@ -1,0 +1,59 @@
+Testing that a missing fw4 table is reported, reported once, and reaches procd.
+
+With no 'inet fw4' table (the firewall is not loaded, or firewall3 replaced
+firewall4), 'nft list table inet fw4' prints nothing on stdout and an error
+on stderr. Two bugs hid the cause:
+
+1. The table check captured the dump with 2>&1, so the error text made the
+   table look present and the chain checks failed on it instead (three
+   "Default fw4 chain 'mangle_...' is missing"). stderr is now dropped, and
+   the chain checks are skipped when the table itself is missing.
+2. A failed environment check made start_service() return null, so its
+   errors stayed in state.errors: the user saw "Loading environment [x]" and
+   "FAILED TO START" with no reason, in the log, in status and in the WebUI.
+   It now returns the errors, which emit_procd_shell() writes into the
+   service data, plus retryOnBoot so the wrapper still sets up the
+   boot-mode retry it used to set up for null.
+
+The empty fixture below is what the check reads when there is no table.
+
+-- File fs/popen~nft_list_table_inet_fw4_2_dev_null.txt --
+-- End --
+
+-- Testcase --
+import create_pbr from 'pbr';
+let pbr = create_pbr();
+
+let result = pbr.start_service(['on_start']);
+let errors = result?.errors || [];
+let shell = pbr.emit_procd_shell(result) || '';
+
+function count(code) {
+	return length(filter(errors, e => e.code == code));
+}
+
+let checks = [
+	['result_returned',        type(result) == 'object'],
+	['table_missing_reported', count('errorDefaultFw4TableMissing') == 1],
+	['no_chain_errors',        count('errorDefaultFw4ChainMissing') == 0],
+	['retry_on_boot',          result?.retryOnBoot == true],
+	['not_deferred',           !result?.deferredToBoot],
+	['shell_retry_flag',       index(shell, "_pbr_retry_on_boot='1'") >= 0],
+	['shell_has_error',        index(shell, 'errorDefaultFw4TableMissing') >= 0],
+];
+
+let pass = 0, fail = 0;
+for (let c in checks) {
+	if (c[1]) {
+		pass++;
+	} else {
+		fail++;
+		printf("FAIL: %s\n", c[0]);
+	}
+}
+printf("fw4_table_missing: %d/%d passed\n", pass, pass + fail);
+-- End --
+
+-- Expect stdout --
+fw4_table_missing: 7/7 passed
+-- End --
