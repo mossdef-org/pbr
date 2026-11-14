@@ -27,15 +27,17 @@
 # ---------------------------------------------------------------------------
 # REFRESHING ON A TIMER (cron)
 # ---------------------------------------------------------------------------
-# Run this file from cron to rebuild the sets periodically. Once a night, at an
-# hour nobody is using the network, is the sensible default:
+# Run this file from cron to rebuild the sets periodically. Once a night is
+# enough for most domains:
 #
 #   0 4 * * * PBR_DNSPREFETCH_MODE=standalone /bin/sh /usr/share/pbr/pbr.user.dnsprefetch
 #
-# Use a shorter interval only if your domains rotate faster than that, and see
-# the note on the gap below before putting one in the middle of the working
-# day -- `0 */6 * * *` would run at 06:00, 12:00 and 18:00 as well as at
-# midnight.
+# A shorter interval is fine if your domains rotate faster than that --
+# `0 * * * *` runs it every hour. A rebuild swaps each set in one step (see
+# below), so a run does not open a window in which a policy matches nothing,
+# and it needs no quiet hour. There is still no point running it faster than
+# the records actually change, and see the note on subdomains below for what
+# each rebuild costs.
 #
 # PBR_DNSPREFETCH_MODE=standalone is required, and is what makes the file
 # runnable on its own: without it the script waits for a pbr run that is not
@@ -54,10 +56,14 @@
 # is reused by somebody else, at which point traffic to it still takes this
 # policy's route. To have each run rebuild the sets from the answers that are
 # current now, set _dnsprefetch_flush_sets='1' where it is defined further down
-# in this file. That empties the domain sets immediately before resolving them
-# again. It touches ONLY the sets dnsmasq populates -- the names are read from
-# pbr's own dnsmasq file -- never the pbr_*_user sets, which hold whatever your
-# other custom user files put there and which nothing here would put back. It
+# in this file. Each run then looks every listed name up first and replaces each
+# set's contents with the answers in a single nft transaction, so a packet sees
+# the old contents or the new ones and never an empty set. A set is left as it
+# was when a lookup for one of its names times out or fails, so a resolver
+# hiccup cannot empty it; a name that no longer exists just adds nothing. It
+# touches ONLY the sets dnsmasq populates -- the names are read from pbr's own
+# dnsmasq file -- never the pbr_*_user sets, which hold whatever your other
+# custom user files put there and which nothing here would put back. It
 # takes effect in standalone mode only: a start or a reload deliberately keeps
 # each set's addresses unless that policy's domain list changed, so that a
 # client still holding a cached answer is not de-routed by a reload it did not
@@ -68,19 +74,15 @@
 # suffix: a policy on example.com picks up www.example.com the moment a client
 # resolves it. The rebuild clears those too, and only the names you listed are
 # re-resolved, so they come back when a client next asks for them and not
-# before. If a particular subdomain matters, add it to the policy next to the
-# parent: it is then resolved in advance like any other listed name and comes
-# back with the rest. Otherwise nft_set_timeout is the gentler tool there -- it
-# ages such entries out on their own clock rather than clearing them all at
-# once.
-#
-# For the second or two between the flush and the lookups that refill the sets,
-# a domain policy matches nothing and new connections take the default route.
-# Connections already established keep the route they have. It is a small gap,
-# but it is a real one: a connection opened in that window goes out of the
-# wrong interface and stays there for its lifetime. That is why a quiet hour is
-# worth more than a short interval -- at 04:00 nobody notices, at 14:00 someone
-# might. There is no point running it faster than the records actually change.
+# before. That is why a rebuild flushes dnsmasq's cache once it has swapped the
+# sets: the client's next lookup then goes upstream, and dnsmasq adds the
+# answer to the set again. A device that still has the name in its own cache
+# does not ask, so its traffic to that subdomain takes the default route until
+# its cache expires. If a particular subdomain matters, add it to the policy
+# next to the parent: it is then resolved in advance like any other listed name
+# and comes back with the rest. Otherwise nft_set_timeout is the gentler tool
+# there -- it ages such entries out on their own clock rather than clearing
+# them all at once.
 #
 # This pairs with the nft_set_timeout option rather than replacing it. Elements
 # a rebuild puts back are new, so their timeout starts again -- which a plain
@@ -111,11 +113,10 @@
 
 _dnsprefetch_self='/usr/share/pbr/pbr.user.dnsprefetch'
 
-# Optional: empty pbr's domain sets before re-resolving, so the run rebuilds
-# them from the answers that are current now instead of adding to whatever is
-# already there. Off by default: a prefetch is additive and cannot remove an
-# address, which is why a domain set otherwise only grows. Set to '1' to
-# enable.
+# Optional: rebuild pbr's domain sets from the answers that are current now
+# instead of adding to whatever is already there. Off by default: a prefetch is
+# additive and cannot remove an address, which is why a domain set otherwise
+# only grows. Set to '1' to enable.
 #
 # It takes effect in standalone mode ONLY (see PBR_DNSPREFETCH_MODE below). A
 # start or a reload deliberately keeps each set's addresses unless that
@@ -274,57 +275,6 @@ else
 		done
 	}
 
-	# Empty the sets that the lookups below will refill, and only those. The
-	# names come out of the same file those lookups are driven from, so this
-	# cannot reach a set dnsmasq does not populate -- in particular not the
-	# per-interface pbr_*_user sets, which hold whatever a custom user file put
-	# there and which nothing here would put back.
-	#
-	#   nftset=/example.com/4#inet#fw4#pbr_wan_4_dst_ip_cfgXXXXXX,6#inet#fw4#...
-	#
-	# One spec per comma-separated field, optionally prefixed 4#/6#, so table
-	# and set are always the last two '#'-separated fields. The line ends in
-	# ' # <policy name>' -- several names on a line pbr has merged -- and a
-	# name may contain a slash ('Plex/Emby Remote Servers' ships in the default
-	# config). So the comment has to go FIRST: stripping to the last '/' before
-	# it would cut inside the name and lose every set on the line. A spec has
-	# no space before its '#', so ' #' can only start the comment.
-	#
-	# FLUSH, never delete: the set object has to survive, or dnsmasq's nftset=
-	# target no longer exists and every add it attempts fails until pbr
-	# rewrites the ruleset.
-	#
-	# The window between this and the lookups that refill the sets is a few
-	# seconds in which a domain policy matches nothing and new connections take
-	# the default route, so the caller runs the two back to back. Established
-	# connections keep their existing route.
-	flush_pbr_sets() {
-		local entry flushed='0' name sets table
-		local IFS='
-'
-
-		sets="$(sed 's| #.*$||; s|.*/||; s|[[:space:]].*$||' "$packageDnsmasqFile" 2>/dev/null |
-			tr ',' '\n' |
-			awk -F'#' 'NF >= 3 && $NF != "" { print $(NF - 1)" "$NF }' |
-			sort -u)"
-
-		[ -z "$sets" ] && {
-			output "$_WARNING_ No $packageName domain sets found to flush"
-			return 1
-		}
-
-		# Deliberately not a 'while read' fed by a pipeline: that runs in a
-		# subshell and the count never comes back.
-		for entry in $sets; do
-			table="${entry%% *}"
-			name="${entry#* }"
-			/usr/sbin/nft flush set 'inet' "$table" "$name" 2>/dev/null &&
-				flushed="$((flushed + 1))"
-		done
-
-		output "Flushed $flushed $packageName domain set(s) before resolving"
-	}
-
 	run_nslookup() {
 		local output reason
 
@@ -351,6 +301,181 @@ else
 		[ "${hard_errors:-0}" -ne '0' ] && result="$__FAIL__"
 		[ "${entries:-0}" -gt '0' ] && [ "${errors:-0}" -eq "$entries" ] && result="$__FAIL__"
 		output "Finished resolving $entries domain names in policies (${errors:-0} failed) $result"
+	}
+
+	# Standalone mode with _dnsprefetch_flush_sets='1': resolve every name
+	# FIRST, then replace each domain set's contents in ONE nft transaction
+	# (flush set + add element). The kernel commits a transaction as a single
+	# generation, so a packet sees either the old contents or the new ones and
+	# never an empty set -- there is no flush-to-refill gap.
+	#
+	# The lookups still go through dnsmasq, so a set holds exactly what clients
+	# are told. Its cache is NOT flushed first: this function inserts the
+	# answers itself, so a cache hit is as good as an upstream reply. It is
+	# flushed AFTERWARDS, for the names nobody listed -- see the end of
+	# resolve_and_swap().
+	#
+	# Per set, from the answers for the names that feed it:
+	#   any of them timed out, failed or -> skip the set, keep its old contents
+	#   has no result at all                (a transient failure must not
+	#                                       empty it);
+	#   NXDOMAIN                         -> that name adds nothing, so its old
+	#                                       addresses drop with the swap (a
+	#                                       name that is gone for good must not
+	#                                       freeze the set forever);
+	#   all answered, no addresses       -> empty the set: a definitive
+	#                                       answer, so stale addresses must
+	#                                       not stay behind.
+	swap_dir="/var/run/${packageName}.swap.$$"
+
+	# One file pair per name: <name>.rc holds 0 (answered), 2 (NXDOMAIN) or 1
+	# (anything else), <name>.addr the answer addresses. The first 'Address:'
+	# line nslookup prints is the server itself, before any 'Name:' line, so
+	# only lines after a 'Name:' are answers.
+	resolve_name() {
+		local out reason
+
+		if out="$(nslookup "$1" 127.0.0.1 2>&1)"; then
+			printf '%s\n' "$out" |
+				awk '/^Name:/ { n = 1 } n && /^Address: / { print $2 }' > "$swap_dir/$1.addr"
+			echo '0' > "$swap_dir/$1.rc"
+			return
+		fi
+		reason="$(printf '%s' "$out" | grep -Eo -m 1 'NXDOMAIN|SERVFAIL|timed out')"
+		output "$_WARNING_ Lookup failed for $1 (${reason:-no reply})"
+		: > "$swap_dir/$1.addr"
+		[ "$reason" = 'NXDOMAIN' ] && echo '2' > "$swap_dir/$1.rc" || echo '1' > "$swap_dir/$1.rc"
+	}
+
+	# The loops split command output on newlines (IFS below), not on words:
+	# deliberately not a 'while read' fed by a pipeline, which runs in a
+	# subshell so the counts would never come back.
+	# shellcheck disable=SC2013
+	resolve_and_swap() {
+		local entry family table_family table set names name addrs nft_cmds
+		local entries='0' errors='0' hard_errors='0' swapped='0' emptied='0' skipped='0' failed='0'
+		local result="$__OK__"
+		local IFS='
+'
+
+		rm -rf "$swap_dir" && mkdir -p "$swap_dir" || return 1
+		trap 'rm -f "$pipe_nslookup"; rm -rf "$swap_dir"' EXIT HUP INT TERM
+
+		# 'family table set name' for every set spec of every name, from the
+		# same file dnsmasq reads, so this cannot reach a set dnsmasq does not
+		# populate -- in particular not the per-interface pbr_*_user sets, which
+		# hold whatever a custom user file put there:
+		#
+		#   nftset=/example.com/4#inet#fw4#pbr_wan_4_dst_ip_cfgXXXXXX,6#inet#fw4#...
+		#
+		# One spec per comma-separated field, optionally prefixed 4#/6#, so
+		# family, table and set are always the last three '#'-separated fields.
+		# The line ends in ' # <policy name>' -- several names on a line pbr has
+		# merged -- and a name may contain a slash ('Plex/Emby Remote Servers'
+		# ships in the default config). So the comment has to go FIRST, or the
+		# '/' split would cut inside the name. A spec has no space before its
+		# '#', so ' #' can only start the comment.
+		sed 's| #.*$||; s|[[:space:]]*$||' "$packageDnsmasqFile" 2>/dev/null |
+			awk -F'/' 'NF >= 3 {
+				n = split($NF, spec, ",")
+				for (d = 2; d < NF; d++) for (i = 1; i <= n; i++) {
+					k = split(spec[i], f, "#")
+					if (k >= 3 && $d != "") print (k >= 4 ? f[1] : "-") " " f[k - 2] " " f[k - 1] " " f[k] " " $d
+				}
+			}' | sort -u > "$swap_dir/map"
+
+		[ -s "$swap_dir/map" ] || {
+			output "$_WARNING_ No $packageName domain sets found to rebuild"
+			return 1
+		}
+
+		output "Resolving domain names in policies..."
+		for name in $(awk '{ print $5 }' "$swap_dir/map" | sort -u); do
+			resolve_name "$name" &
+		done
+		wait
+
+		for name in $(awk '{ print $5 }' "$swap_dir/map" | sort -u); do
+			entries="$((entries + 1))"
+			case "$(cat "$swap_dir/$name.rc" 2>/dev/null)" in
+				0) ;;
+				2) errors="$((errors + 1))" ;;
+				*) errors="$((errors + 1))"; hard_errors="$((hard_errors + 1))" ;;
+			esac
+		done
+
+		for entry in $(awk '{ print $1" "$2" "$3" "$4 }' "$swap_dir/map" | sort -u); do
+			IFS=' ' read -r family table_family table set <<-EOF
+				$entry
+			EOF
+			names="$(awk -v t="$table" -v s="$set" '$3 == t && $4 == s { print $5 }' "$swap_dir/map")"
+
+			# One transient failure among the names keeps the whole set as it is.
+			# Anything but a definitive answer counts, including a name with no
+			# result at all.
+			for name in $names; do
+				case "$(cat "$swap_dir/$name.rc" 2>/dev/null)" in
+					0|2) name='' ;;
+					*) break ;;
+				esac
+			done
+			[ -n "$name" ] && {
+				output "Keeping $set unchanged: lookup for $name failed"
+				skipped="$((skipped + 1))"
+				continue
+			}
+
+			addrs="$(for name in $names; do cat "$swap_dir/$name.addr" 2>/dev/null; done |
+				case "$family" in
+					4) grep -v ':' ;;
+					6) grep ':' ;;
+					*) cat ;;
+				esac | sort -u | awk 'NR > 1 { printf ", " } { printf "%s", $0 }')"
+			# FLUSH, never delete: the set object has to survive, or dnsmasq's
+			# nftset= target no longer exists and every add it attempts fails until
+			# pbr rewrites the ruleset.
+			#
+			# Every name answered and none has an address for this set's family
+			# (only NXDOMAIN, or no record of that family): that is a real answer,
+			# so the set is emptied. 'add element s { }' is a syntax error, so the
+			# flush goes alone.
+			if [ -z "$addrs" ]; then
+				nft_cmds="$(printf 'flush set %s %s %s' "$table_family" "$table" "$set")"
+			else
+				nft_cmds="$(printf 'flush set %s %s %s\nadd element %s %s %s { %s }' \
+					"$table_family" "$table" "$set" "$table_family" "$table" "$set" "$addrs")"
+			fi
+
+			if printf '%s\n' "$nft_cmds" | /usr/sbin/nft -f - 2>"$swap_dir/nft.err"; then
+				if [ -z "$addrs" ]; then
+					output "Emptied $set: no addresses resolved"
+					emptied="$((emptied + 1))"
+				else
+					swapped="$((swapped + 1))"
+				fi
+			else
+				output "$_WARNING_ Failed to rebuild $set: $(head -n 1 "$swap_dir/nft.err")"
+				failed="$((failed + 1))"
+			fi
+		done
+
+		# The swap removed the addresses of names nobody listed, the subdomains
+		# dnsmasq matched by suffix. dnsmasq adds to a set only on an upstream
+		# reply, never on a cache hit, so while those names sit in its cache a
+		# client's next lookup would not put them back. Flush the cache now that
+		# the listed names are in place, so that it does -- the same as before
+		# set rebuilding existed. dnsmasq answered queries above, so it is past
+		# initialisation and a SIGHUP is safe.
+		[ "$((swapped + emptied))" -gt '0' ] && killall -q -s HUP dnsmasq
+
+		# Same verdict as nslookup_tracker(): NXDOMAIN alone does not fail a
+		# run that resolved something, any hard failure does.
+		[ "$hard_errors" -ne '0' ] && result="$__FAIL__"
+		[ "$entries" -gt '0' ] && [ "$errors" -eq "$entries" ] && result="$__FAIL__"
+		[ "$failed" -ne '0' ] && result="$__FAIL__"
+		output "Finished resolving $entries domain names in policies ($errors failed), rebuilt $swapped $packageName domain set(s), emptied $emptied, kept $skipped unchanged $result"
+		rm -rf "$swap_dir"
+		[ "$failed" -eq '0' ]
 	}
 
 	main() {
@@ -412,16 +537,25 @@ else
 			rc='1'
 		}
 
+		# Standalone with set rebuilding: resolve first, then swap each set in one
+		# transaction. It flushes the dnsmasq cache itself, after the swap rather
+		# than before the lookups -- see resolve_and_swap().
+		if [ "$rc" -eq '0' ] && [ "$_dnsprefetch_flush_sets" = '1' ] &&
+			[ "$PBR_DNSPREFETCH_MODE" = 'standalone' ]; then
+			resolve_and_swap || rc='1'
+			rm -f "$pipe_nslookup"
+			return "$rc"
+		fi
+
 		# On the parent-pid path pbr has already restarted dnsmasq or sent the
 		# cache-flushing HUP before its worker exited, so repeating it is redundant.
 		# The fallback cannot make that guarantee, so retain the flush there. A
 		# standalone run ALWAYS needs it: dnsmasq adds to an nftset only when it
 		# receives a reply from upstream (extract_addresses(), called from
 		# process_reply()), never when it answers from its own cache. Without the
-		# flush the lookups below return cached answers and add nothing at all --
-		# which with set flushing enabled would leave the sets empty. Wait
-		# one second before probing to ensure the first answer cannot race ahead of
-		# dnsmasq handling the signal.
+		# flush the lookups below return cached answers and add nothing at all.
+		# Wait one second before probing to ensure the first answer cannot race
+		# ahead of dnsmasq handling the signal.
 		[ "$rc" -eq '0' ] && [ "$flush_dns_cache" -eq '1' ] && {
 			killall -q -s HUP dnsmasq
 			sleep '1'
@@ -430,12 +564,6 @@ else
 				rc='1'
 			}
 		}
-
-		# Flushing takes out the addresses that are still correct as well, so it
-		# must be immediately followed by the lookups that put them back.
-		# Standalone mode only -- see the option's own comment at the top.
-		[ "$rc" -eq '0' ] && [ "$_dnsprefetch_flush_sets" = '1' ] &&
-			[ "$PBR_DNSPREFETCH_MODE" = 'standalone' ] && flush_pbr_sets
 
 		[ "$rc" -eq '0' ] && {
 			nslookup_tracker & exec 3>"$pipe_nslookup"
