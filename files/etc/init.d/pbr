@@ -8,6 +8,8 @@ START=20
 USE_PROCD=1
 
 if type extra_command 1>/dev/null 2>&1; then
+	extra_command 'dnsprefetch' "Resolves the domain names in policies again, for a cron job
+		Empties the domain sets first if dnsprefetch_flush_sets is set"
 	extra_command 'enable_forward' "Enables forwarding from LAN > WAN, can be used if the router is stuck in Disabled state"
 	extra_command 'netifd' "Netifd extensions operations"
 	extra_command 'on_interface_reload' "Run service on indicated interface reload"
@@ -19,9 +21,11 @@ if type extra_command 1>/dev/null 2>&1; then
 	extra_command 'version' "Show version information"
 else
 # shellcheck disable=SC2034
-	EXTRA_COMMANDS='help netifd on_interface_reload status version'
+	EXTRA_COMMANDS='dnsprefetch help netifd on_interface_reload status version'
 # shellcheck disable=SC2034
 	EXTRA_HELP="
+\tdnsprefetch\tResolves the domain names in policies again, for a cron job
+\t\tEmpties the domain sets first if dnsprefetch_flush_sets is set
 \tstatus\tDisplays current routing mode and nft file paths
 \t\tUse '-d' option for detailed diagnostic output
 \tsupport\tShow diagnostic info and mask sensitive data
@@ -43,6 +47,9 @@ readonly _ucode="ucode -S -L /lib/${packageName} -L /lib/mwan4 /lib/${packageNam
 
 stop_forward() { $_ucode stop_forward; }
 enable_forward() { $_ucode enable_forward; }
+dnsprefetch() {
+	PBR_DNSPREFETCH_MODE='standalone' /bin/sh "/usr/share/${packageName}/pbr.user.dnsprefetch"
+}
 
 boot() {
 	local enabled
@@ -205,6 +212,7 @@ load_validate_config() {
 		'ipv6_enabled:bool:0' \
 		'resolver_set:or("", "none", "dnsmasq.nftset")' \
 		'resolver_instance:list(or(integer, string)):*' \
+		'dnsprefetch_flush_sets:bool:0' \
 		'verbosity:range(0,2):2' \
 		'uplink_mark:regex("[A-Fa-f0-9]{8}"):00010000' \
 		'uplink_ip_rules_priority:range(99,32765):30000' \
