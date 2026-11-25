@@ -173,7 +173,7 @@ support() {
 			json_close_array
 			local _payload _out _id _success
 			_payload="$(json_dump)"
-			_out="$(curl -s -k 'https://api.paste.ee/v1/pastes' \
+			_out="$(curl -s 'https://api.paste.ee/v1/pastes' \
 				-X POST \
 				-H 'Content-Type: application/json' \
 				-H 'X-Auth-Token:uVOJt6pNqjcEWu7qiuUuuxWQafpHhwMvNEBviRV2B' \
