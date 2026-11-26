@@ -168,8 +168,10 @@ function create_nft(fs_mod, config, sh, output, pkg, platform, network, V, state
 	}
 
 	function nft_check_element(element_type, name) {
+		// stderr is dropped: with 2>&1 a missing table left nft's error text
+		// in the dump, which made the table look present.
 		if (!nft_fw4_dump)
-			nft_fw4_dump = sh.exec('nft list table inet fw4 2>&1');
+			nft_fw4_dump = sh.exec('nft list table inet fw4 2>/dev/null');
 		if (element_type == 'table' && name == 'fw4')
 			return !!(nft_fw4_dump && nft_fw4_dump != '');
 		let lines = split(nft_fw4_dump, '\n');

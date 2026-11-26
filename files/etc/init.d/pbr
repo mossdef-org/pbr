@@ -74,10 +74,13 @@ start_service() {
 	#   _pbr_ifaces_triggers — space-separated iface list, consumed by service_triggers()
 	#   _pbr_svc_data        — json_add_* command block, eval'd by service_data() (empty on degraded start)
 	#   _pbr_deferred_to_boot — '1' when ucode bailed due to uplink-not-ready
+	#   _pbr_retry_on_boot   — '1' when the environment check failed: its
+	#                          errors are in _pbr_svc_data, and the start is
+	#                          retried like a bail-out (boot-mode trigger)
 	# All must be set BEFORE procd invokes service_triggers / service_data
 	# so the trigger registration and data block see them.
 	eval "$_pbr_svc_defs"
-	if [ -n "$_pbr_deferred_to_boot" ]; then
+	if [ -n "$_pbr_deferred_to_boot" ] || [ -n "$_pbr_retry_on_boot" ]; then
 		[ ! -s "/var/run/${packageName}.lock" ] && touch "/var/run/${packageName}.boot"
 	fi
 	# Degraded start: drop the service_data hook so procd's _procd_close_service
