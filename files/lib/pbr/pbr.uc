@@ -964,17 +964,11 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		if (net.is_split_uplink() && iface == cfg.uplink_interface6)
 			table_iface = cfg.uplink_interface4;
 
-		let rt_content = readfile(pkg.rt_tables_file) || '';
-		if (index(rt_content, tid + ' ' + pkg.ip_table_prefix + '_' + table_iface) < 0) {
-			let lines = split(rt_content, '\n');
-			let new_lines = [];
-			for (let l in lines) {
-				if (l != '' && index(l, pkg.ip_table_prefix + '_' + table_iface) < 0)
-					push(new_lines, l);
-			}
-			push(new_lines, tid + ' ' + pkg.ip_table_prefix + '_' + table_iface);
-			writefile(pkg.rt_tables_file, join('\n', new_lines) + '\n');
-			sh.run('sync');
+		let name = pkg.ip_table_prefix + '_' + table_iface;
+		if (nft.get_rt_tables_id(table_iface) != tid) {
+			let content = nft.remove_tables(nft.read_tables(), (entry) => entry == name);
+			if (length(content) && substr(content, -1) != '\n') content += '\n';
+			nft.save_tables(content + tid + ' ' + name + '\n');
 		}
 
 		// Always create the nft mark chain so policies can reference it
@@ -1086,15 +1080,8 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 		let table_iface = iface;
 		if (net.is_split_uplink() && iface == cfg.uplink_interface6)
 			table_iface = cfg.uplink_interface4;
-		let rt = readfile(pkg.rt_tables_file) || '';
-		let lines = split(rt, '\n');
-		let new_lines = [];
-		for (let l in lines) {
-			if (l != '' && index(l, pkg.ip_table_prefix + '_' + table_iface) < 0)
-				push(new_lines, l);
-		}
-		writefile(pkg.rt_tables_file, join('\n', new_lines) + '\n');
-		sh.run('sync');
+		let name = pkg.ip_table_prefix + '_' + table_iface;
+		nft.save_tables(nft.remove_tables(nft.read_tables(), (entry) => entry == name));
 		return 0;
 	};
 
@@ -2119,6 +2106,7 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 			// fw4 reload rebuilds the whole inet table atomically from
 			// 30-pbr.nft, so the old chains and sets are replaced regardless --
 			// which is why stop() below likewise cleans only these two.
+			nft.begin_tables();
 			nft.cleanup('main_table', 'rt_tables');
 			nft.nft_file.init('main', iface_registry);
 			output.okn();
@@ -2128,6 +2116,7 @@ function create_pbr(fs_mod, uci_mod, ubus_mod) {
 			config.uci_ctx('network').foreach('network', 'interface', function(s) {
 				interface_process.create(s['.name']);
 			});
+			nft.finish_tables();
 			interface_process.tor('destroy');
 			if (net.is_tor_configured()) interface_process.tor('create');
 			interface_process.create_global_rules();
