@@ -1,0 +1,29 @@
+A full reload publishes the final routing table names once. Repeating it
+with the same interfaces leaves the file untouched.
+
+-- Testcase --
+import create_pbr from 'pbr';
+
+let path = '/etc/iproute2/rt_tables', writes = 0;
+let fs = require('fs');
+let monitored = { ...fs, writefile: (file, data) => {
+	if (file == path) writes++;
+	return fs.writefile(file, data);
+} };
+let prefix = '# custom pbr_note\n42 custom\n255 local\n';
+global.mocklib.capture(path, prefix + '288 pbr_removed\n');
+function reload() {
+	create_pbr(monitored).start_service(['on_reload']);
+}
+reload();
+let first = global.mocklib.read_captured(path);
+assert(writes == 1 && index(first, prefix) == 0);
+assert(index(first, 'pbr_removed') < 0 && index(first, 'pbr_wan') >= 0);
+reload();
+assert(writes == 1 && global.mocklib.read_captured(path) == first);
+print("ok\n");
+-- End --
+
+-- Expect stdout --
+ok
+-- End --

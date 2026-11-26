@@ -33,15 +33,66 @@ function create_nft(fs_mod, config, sh, output, pkg, platform, network, V, state
 
 	// ── NFT Query Helpers ─────────────────────────────────────────────
 
+	let pending_tables = null;
+
+	function read_tables() {
+		let content = pending_tables ?? readfile(pkg.rt_tables_file);
+		if (content == null) die('Cannot read ' + pkg.rt_tables_file);
+		return content;
+	}
+
+	function save_tables(content) {
+		if (pending_tables != null) {
+			pending_tables = content;
+			return;
+		}
+		if (read_tables() == content) return;
+		if (writefile(pkg.rt_tables_file, content) != length(content))
+			die('Cannot write ' + pkg.rt_tables_file);
+		sh.run('sync');
+	}
+
+	function begin_tables() {
+		pending_tables = read_tables();
+	}
+
+	function finish_tables() {
+		let content = pending_tables;
+		pending_tables = null;
+		save_tables(content);
+	}
+
+	function table_entry(line) {
+		return match(line, /^\s*([0-9]+)\s+([^#\s]+)\s*(#.*)?$/);
+	}
+
+	// Keep comments, blank lines, and mappings belonging to other services.
+	function remove_tables(content, remove) {
+		let lines = split(content, '\n');
+		return join('\n', filter(lines, (line) => {
+			let m = table_entry(line);
+			return !m || !remove(m[2]);
+		}));
+	}
+
 	function get_rt_tables_id(iface) {
-		let content = readfile(pkg.rt_tables_file) || '';
-		let esc_iface = replace(iface, /([.+*?^${}()|[\]\\])/g, '\\$1');
-		let pattern = regexp('(^|\\n)(\\d+)\\s+' + pkg.ip_table_prefix + '_' + esc_iface + '(\\n|$)');
-		let m = match(content, pattern);
-		return m ? m[2] : '';
+		let name = pkg.ip_table_prefix + '_' + iface;
+		for (let line in split(read_tables(), '\n')) {
+			let entry = table_entry(line);
+			if (entry && entry[2] == name) return entry[1];
+		}
+		return '';
 	}
 
 	function get_rt_tables_next_id() {
+		if (pending_tables != null) {
+			let highest = 0;
+			for (let line in split(pending_tables, '\n')) {
+				let m = match(line, /^([0-9]+)\s+/);
+				if (m) highest = max(highest, int(m[1]));
+			}
+			return '' + (highest + 1);
+		}
 		let out = sh.exec("sort -r -n " + sh.quote(pkg.rt_tables_file) + " | grep -o -E -m 1 '^[0-9]+'");
 		return '' + ((int(out) || 0) + 1);
 	}
@@ -655,21 +706,8 @@ function create_nft(fs_mod, config, sh, output, pkg, platform, network, V, state
 		for (let action in actions) {
 			switch (action) {
 			case 'rt_tables': {
-				let content = readfile(pkg.rt_tables_file) || '';
-				let lines = split(content, '\n');
-				let new_lines = [];
-				for (let line in lines) {
-					if (line == '') continue;
-					let m = match(line, regexp(pkg.ip_table_prefix + '_(.*)'));
-					if (m) {
-						let table_name = pkg.ip_table_prefix + '_' + m[1];
-						if (!network.is_netifd_table(table_name))
-							continue;
-					}
-					push(new_lines, line);
-				}
-				writefile(pkg.rt_tables_file, join('\n', new_lines) + '\n');
-				sh.run('sync');
+				save_tables(remove_tables(read_tables(), (name) =>
+					index(name, pkg.ip_table_prefix + '_') == 0 && !network.is_netifd_table(name)));
 				break;
 			}
 			case 'main_table': {
@@ -1246,6 +1284,7 @@ function create_nft(fs_mod, config, sh, output, pkg, platform, network, V, state
 	}
 
 	return {
+		read_tables, save_tables, begin_tables, finish_tables, remove_tables,
 		get_rt_tables_id, get_rt_tables_next_id, get_rt_tables_non_pbr_next_id,
 		get_mark_nft_chains, get_external_mark_chains,
 		is_service_running_nft, get_nft_sets,
